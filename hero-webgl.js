@@ -33,42 +33,46 @@ import * as THREE from './vendor/three.module.min.js';
     mobile:  { surface: 3150,  edges: 945,  internal: 1155, core: 250  }
   };
 
-  // ─── Ribbon Config ────────────────────────────────────────
+  // ─── Field Config ─────────────────────────────────────────
   // Cube width = 2 * CUBE_HALF = 1.1
   var CUBE_WIDTH = 2 * CUBE_HALF;
 
-  var RIBBON_PRIMARY = {
-    radiusA: 1.85 * CUBE_WIDTH,       // major radius
-    radiusB: 0.82 * 1.85 * CUBE_WIDTH, // minor radius (0.82 of major)
-    width: 0.24,                       // ribbon width (normalized)
-    thickness: 0.13,                   // ribbon thickness
+  // Primary field: wide flowing river, dominant
+  var FIELD_PRIMARY = {
+    radiusMin: 1.35 * CUBE_WIDTH,
+    radiusMax: 2.55 * CUBE_WIDTH,
+    radiusBRatio: 0.82,               // minor/major ratio
+    width: 0.72,                       // river width — very wide to dissolve ring appearance
+    thickness: 0.28,
     inclX: -18 * Math.PI / 180,
     inclY: 13 * Math.PI / 180,
     inclZ: -10 * Math.PI / 180,
     baseSpeed: 2 * Math.PI / 90,       // 90s per traversal
-    opacity: 0.92,
-    highlightOpacity: 0.50,
+    opacity: 0.82,
+    highlightOpacity: 0.45,
     highlightFraction: 0.04
   };
 
-  var RIBBON_SECONDARY = {
-    radiusA: 1.30 * CUBE_WIDTH,
-    radiusB: 0.75 * 1.30 * CUBE_WIDTH,
-    width: 0.15,
-    thickness: 0.08,
+  // Secondary field: different inclination, thinner, adds complexity
+  var FIELD_SECONDARY = {
+    radiusMin: 0.90 * CUBE_WIDTH,
+    radiusMax: 1.95 * CUBE_WIDTH,
+    radiusBRatio: 0.75,
+    width: 0.48,
+    thickness: 0.20,
     inclX: 5 * Math.PI / 180,
     inclY: -8 * Math.PI / 180,
     inclZ: 18 * Math.PI / 180,
-    baseSpeed: 2 * Math.PI / 115,      // 115s per traversal
-    opacity: 0.78,
-    highlightOpacity: 0.40,
+    baseSpeed: 2 * Math.PI / 115,
+    opacity: 0.68,
+    highlightOpacity: 0.35,
     highlightFraction: 0.05
   };
 
-  var RIBBON_COUNTS = {
-    desktop: { primary: 24000, secondary: 11000 },
-    tablet:  { primary: 14000, secondary: 6500 },
-    mobile:  { primary: 8000,  secondary: 3500 }
+  var FIELD_COUNTS = {
+    desktop: { primary: 24000, secondary: 11000, dust: 3000 },
+    tablet:  { primary: 14000, secondary: 6500,  dust: 1500 },
+    mobile:  { primary: 8000,  secondary: 3500,  dust: 800  }
   };
 
   // ─── Colors ───────────────────────────────────────────────
@@ -80,7 +84,7 @@ import * as THREE from './vendor/three.module.min.js';
   // ─── State ────────────────────────────────────────────────
   var renderer, scene, camera;
   var cubeGroup;
-  var ribbonObjects = [];
+  var fieldObjects = [];
   var animating = false, rafId = null, lastTime = 0;
   var scrollProgress = 0, targetScrollProgress = 0;
   var entranceProgress = 0, targetEntranceProgress = 0;
@@ -117,18 +121,18 @@ import * as THREE from './vendor/three.module.min.js';
     return new THREE.Matrix3().setFromMatrix4(m);
   }
 
-  // Weighted theta sampling for density variation
-  // Creates 3 denser sectors and 1 thinner gap
-  function sampleDenseTheta(seedOffset) {
+  // Organic density-shaped theta sampling
+  // Creates fluid-like density variation: denser regions, thinner gaps, no symmetry
+  function sampleFieldTheta(seedOffset) {
     var theta;
     var attempts = 0;
     while (attempts < 20) {
       theta = Math.random() * Math.PI * 2;
-      // Density function: 3 peaks at ~0, ~2.1, ~4.2; gap at ~3.5
-      var density = 0.45
-        + 0.30 * Math.cos(theta * 1.5 + (seedOffset || 0))
-        + 0.15 * Math.cos(theta * 3.0 + (seedOffset || 0) + 0.7);
-      density = Math.max(0.1, density);
+      var density = 0.50
+        + 0.22 * Math.cos(theta * 1.5 + seedOffset)
+        + 0.12 * Math.cos(theta * 2.8 + seedOffset * 1.7 + 0.5)
+        + 0.08 * Math.cos(theta * 4.5 + seedOffset * 2.3 + 1.2);
+      density = Math.max(0.15, density);
       if (Math.random() < density) return theta;
       attempts++;
     }
@@ -404,9 +408,15 @@ import * as THREE from './vendor/three.module.min.js';
     scene.add(cubeGroup);
   }
 
-  // ─── Ribbon Shaders ───────────────────────────────────────
-  var ribbonVertexShader = [
-    "attribute float aTheta;",
+  // ─── Field Shaders ────────────────────────────────────────
+  // The field is a volumetric particle river.
+  // Particles flow along noise-perturbed stream lines.
+  // The field breathes and shifts density over time.
+  // The cube emerges through a gradual density gradient near center.
+  var fieldVertexShader = [
+    "attribute float aStreamRadius;",
+    "attribute float aStreamPos;",
+    "attribute float aSeed;",
     "attribute float aWidthOffset;",
     "attribute float aThicknessOffset;",
     "attribute float aPhase;",
@@ -422,25 +432,37 @@ import * as THREE from './vendor/three.module.min.js';
     "uniform float uEntrance;",
     "uniform float uCullMode;",
     "uniform float uCubeZ;",
-    "uniform float uRadiusA;",
-    "uniform float uRadiusB;",
+    "uniform float uRadiusBRatio;",
+    "uniform float uHalfWidth;",
     "uniform mat3 uRotation;",
     "varying vec3 vColor;",
     "varying float vBrightness;",
     "void main() {",
-    "  float theta = aTheta + (uReduceMotion > 0.5 ? 0.0 : uTime * aSpeed);",
-    "  float ct = cos(theta);",
-    "  float st = sin(theta);",
-    "  vec3 centerLocal = vec3(uRadiusA * ct, uRadiusB * st, 0.0);",
-    "  vec3 normalLocal = normalize(vec3(uRadiusB * ct, uRadiusA * st, 0.0));",
-    "  vec3 binormalLocal = vec3(0.0, 0.0, 1.0);",
+    "  float flowTime = uReduceMotion > 0.5 ? 0.0 : uTime;",
+    "  float theta = aStreamPos * 6.283185 + flowTime * aSpeed;",
+    // Noise-perturbed stream line — organic, not a perfect ellipse
+    "  float n1 = sin(theta * 2.3 + aSeed * 6.283);",
+    "  float n2 = cos(theta * 1.7 + aSeed * 4.56);",
+    "  float n3 = sin(theta * 3.1 + aSeed * 2.0);",
+    "  float n4 = sin(theta * 5.5 + aSeed * 8.1);",
+    "  float n5 = cos(theta * 7.3 + aSeed * 3.7);",
+    "  vec3 centerLocal = vec3(",
+    "    aStreamRadius * cos(theta) + n1 * aStreamRadius * 0.22 + n4 * aStreamRadius * 0.08,",
+    "    aStreamRadius * uRadiusBRatio * sin(theta) + n2 * aStreamRadius * 0.18 + n5 * aStreamRadius * 0.07,",
+    "    n3 * aStreamRadius * 0.14 + n4 * aStreamRadius * 0.05",
+    "  );",
     "  vec3 center = uRotation * centerLocal;",
+    // Normal and binormal for width/thickness offsets
+    "  vec3 normalLocal = normalize(vec3(uRadiusBRatio * cos(theta), sin(theta), 0.0));",
     "  vec3 normal = uRotation * normalLocal;",
-    "  vec3 binormal = uRotation * binormalLocal;",
+    "  vec3 binormal = normalize(cross(normalize(center + vec3(0.001)), normal));",
     "  vec3 worldPos = center + normal * aWidthOffset + binormal * aThicknessOffset;",
+    // Entrance scale
     "  worldPos *= mix(0.75, 1.0, uEntrance);",
+    // Scroll dispersion
     "  worldPos += normalize(worldPos + vec3(0.001)) * uScrollProgress * 0.4;",
     "  vec4 mvPosition = modelViewMatrix * vec4(worldPos, 1.0);",
+    // Front/back culling for cube depth integration
     "  float zDiff = mvPosition.z - uCubeZ;",
     "  if (uCullMode < 0.5 && zDiff > 0.0) {",
     "    gl_PointSize = 0.0;",
@@ -452,15 +474,26 @@ import * as THREE from './vendor/three.module.min.js';
     "    gl_Position = vec4(2.0, 2.0, 2.0, 1.0);",
     "    return;",
     "  }",
+    // Density modulation — fluid-like, not symmetric
+    "  float densityShift = flowTime * 0.08;",
+    "  float densityMod = 0.50",
+    "    + 0.30 * sin(theta * 1.5 + aSeed * 3.0 + densityShift)",
+    "    + 0.18 * cos(theta * 2.7 + aSeed * 5.0 + densityShift * 0.7);",
+    // Breathing — slow density oscillation
+    "  float breath = sin(flowTime * 0.3 + aPhase) * 0.06;",
+    "  densityMod += breath;",
+    "  densityMod = max(0.2, densityMod);",
+    // Border dissolve — particles at river edges fade naturally
+    "  float widthFactor = 1.0 - abs(aWidthOffset) / uHalfWidth;",
+    "  widthFactor = smoothstep(0.0, 0.4, widthFactor);",
+    // Cube emergence — gradual density reduction near center (negative space)
     "  float distToCenter = length(mvPosition.xy);",
-    "  float clarityRadius = 0.65;",
-    "  float clarityFactor = smoothstep(clarityRadius, clarityRadius * 1.9, distToCenter);",
+    "  float clarityFactor = smoothstep(0.40, 1.1, distToCenter);",
     "  float frontWeight = smoothstep(-0.15, 0.35, zDiff);",
-    "  float densityMod = 0.75 + 0.15 * sin(theta * 1.5) + 0.10 * cos(theta * 2.5 + 0.7);",
-    "  float shimmer = uReduceMotion > 0.5 ? 0.0 : sin(uTime * 0.5 + aPhase) * 0.06;",
     "  vColor = aColorMix;",
-    "  vBrightness = aBrightness * densityMod * (1.0 + shimmer);",
-    "  vBrightness *= mix(1.0, mix(0.15, 1.0, clarityFactor), frontWeight);",
+    "  vBrightness = aBrightness * densityMod * widthFactor;",
+    "  vBrightness *= mix(1.0, mix(0.20, 1.0, clarityFactor), frontWeight);",
+    // Depth attenuation
     "  float depth = -mvPosition.z;",
     "  float depthFactor = smoothstep(3.0, 7.5, depth);",
     "  gl_PointSize = max(1.0, aSize * uPointScale * (1.0 - depthFactor * 0.25) / depth);",
@@ -468,7 +501,7 @@ import * as THREE from './vendor/three.module.min.js';
     "}"
   ].join("\n");
 
-  var ribbonFragmentShader = [
+  var fieldFragmentShader = [
     "varying vec3 vColor;",
     "varying float vBrightness;",
     "uniform float uOpacity;",
@@ -481,7 +514,7 @@ import * as THREE from './vendor/three.module.min.js';
     "}"
   ].join("\n");
 
-  var ribbonHighlightFragmentShader = [
+  var fieldHighlightFragmentShader = [
     "varying vec3 vColor;",
     "varying float vBrightness;",
     "uniform float uOpacity;",
@@ -494,7 +527,48 @@ import * as THREE from './vendor/three.module.min.js';
     "}"
   ].join("\n");
 
-  // ─── Ribbon Particle Generation ───────────────────────────
+  // ─── Dust Shaders ─────────────────────────────────────────
+  var dustVertexShader = [
+    "attribute float aSize;",
+    "attribute vec3 aColorMix;",
+    "attribute float aPhase;",
+    "attribute float aBrightness;",
+    "uniform float uTime;",
+    "uniform float uPointScale;",
+    "uniform float uReduceMotion;",
+    "uniform float uEntrance;",
+    "varying vec3 vColor;",
+    "varying float vBrightness;",
+    "void main() {",
+    "  vColor = aColorMix;",
+    "  float drift = uReduceMotion > 0.5 ? 0.0 : sin(uTime * 0.1 + aPhase) * 0.02;",
+    "  vec3 pos = position;",
+    "  pos.x += drift;",
+    "  pos.y += cos(uTime * 0.08 + aPhase) * 0.02;",
+    "  pos *= mix(0.75, 1.0, uEntrance);",
+    "  vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);",
+    "  vBrightness = aBrightness;",
+    "  float depth = -mvPosition.z;",
+    "  float depthFactor = smoothstep(3.0, 8.0, depth);",
+    "  gl_PointSize = max(1.0, aSize * uPointScale * (1.0 - depthFactor * 0.3) / depth);",
+    "  gl_Position = projectionMatrix * mvPosition;",
+    "}"
+  ].join("\n");
+
+  var dustFragmentShader = [
+    "varying vec3 vColor;",
+    "varying float vBrightness;",
+    "uniform float uOpacity;",
+    "void main() {",
+    "  vec2 coord = gl_PointCoord - vec2(0.5);",
+    "  float dist = length(coord);",
+    "  if (dist > 0.5) discard;",
+    "  float alpha = smoothstep(0.5, 0.12, dist);",
+    "  gl_FragColor = vec4(vColor * vBrightness, alpha * uOpacity);",
+    "}"
+  ].join("\n");
+
+  // ─── Field Particle Generation ────────────────────────────
   function pickPrimaryColor() {
     var r = Math.random();
     if (r < 0.60) return COLOR_NAVY;
@@ -513,25 +587,29 @@ import * as THREE from './vendor/three.module.min.js';
     return Math.random() < 0.7 ? COLOR_GREEN : COLOR_PALE_GREEN;
   }
 
-  function generateRibbonParticles(count, config, isPrimary, densitySeed) {
+  function generateFieldParticles(count, config, isPrimary, densitySeed) {
     var particles = [];
     var highlightCount = Math.floor(count * config.highlightFraction);
     var mainCount = count - highlightCount;
     var colorPicker = isPrimary ? pickPrimaryColor : pickSecondaryColor;
-    var sizeBase = isPrimary ? 0.7 : 0.5;
-    var sizeRange = isPrimary ? 1.0 : 0.7;
-    var brightnessBase = isPrimary ? 0.80 : 0.70;
-    var brightnessRange = isPrimary ? 0.20 : 0.20;
+    var sizeBase = isPrimary ? 0.6 : 0.45;
+    var sizeRange = isPrimary ? 0.9 : 0.6;
+    var brightnessBase = isPrimary ? 0.75 : 0.65;
+    var brightnessRange = isPrimary ? 0.25 : 0.25;
     var halfWidth = config.width * 0.5;
     var halfThickness = config.thickness * 0.5;
+    var radiusRange = config.radiusMax - config.radiusMin;
 
     for (var i = 0; i < mainCount; i++) {
-      var theta = sampleDenseTheta(densitySeed);
+      var theta = sampleFieldTheta(densitySeed);
+      var streamRadius = config.radiusMin + Math.pow(Math.random(), 0.8) * radiusRange;
       var c = colorPicker();
       particles.push({
-        theta: theta,
-        widthOffset: (Math.random() * 2 - 1) * halfWidth * Math.pow(Math.random(), 0.7),
-        thicknessOffset: (Math.random() * 2 - 1) * halfThickness,
+        streamRadius: streamRadius,
+        streamPos: theta / (Math.PI * 2),
+        seed: Math.random(),
+        widthOffset: gaussian() * halfWidth * 0.65,
+        thicknessOffset: gaussian() * halfThickness * 0.65,
         phase: Math.random() * Math.PI * 2,
         speed: config.baseSpeed * (0.96 + Math.random() * 0.08),
         size: sizeBase + Math.random() * sizeRange,
@@ -543,16 +621,19 @@ import * as THREE from './vendor/three.module.min.js';
     }
 
     for (var j = 0; j < highlightCount; j++) {
-      var thetaH = sampleDenseTheta(densitySeed + 1.5);
+      var thetaH = sampleFieldTheta(densitySeed + 1.5);
+      var streamRadiusH = config.radiusMin + Math.pow(Math.random(), 0.6) * radiusRange;
       var cH = pickHighlightColor();
       particles.push({
-        theta: thetaH,
-        widthOffset: (Math.random() * 2 - 1) * halfWidth * 0.6,
-        thicknessOffset: (Math.random() * 2 - 1) * halfThickness * 0.5,
+        streamRadius: streamRadiusH,
+        streamPos: thetaH / (Math.PI * 2),
+        seed: Math.random(),
+        widthOffset: gaussian() * halfWidth * 0.35,
+        thicknessOffset: gaussian() * halfThickness * 0.35,
         phase: Math.random() * Math.PI * 2,
         speed: config.baseSpeed * (0.96 + Math.random() * 0.08),
-        size: 0.6 + Math.random() * 0.8,
-        brightness: 0.75 + Math.random() * 0.25,
+        size: 0.6 + Math.random() * 0.7,
+        brightness: 0.80 + Math.random() * 0.20,
         color: cH,
         densityBias: 0.7,
         isHighlight: true
@@ -562,11 +643,13 @@ import * as THREE from './vendor/three.module.min.js';
     return particles;
   }
 
-  // ─── Ribbon System Creation ───────────────────────────────
-  function fillRibbonGeometry(geo, particles, rotationMat3) {
+  // ─── Field System Creation ────────────────────────────────
+  function fillFieldGeometry(geo, particles) {
     var n = particles.length;
     var pos = new Float32Array(n * 3);
-    var aTheta = new Float32Array(n);
+    var aStreamRadius = new Float32Array(n);
+    var aStreamPos = new Float32Array(n);
+    var aSeed = new Float32Array(n);
     var aWidthOffset = new Float32Array(n);
     var aThicknessOffset = new Float32Array(n);
     var aPhase = new Float32Array(n);
@@ -576,17 +659,12 @@ import * as THREE from './vendor/three.module.min.js';
     var aColorMix = new Float32Array(n * 3);
     var aDensityBias = new Float32Array(n);
 
-    var e = rotationMat3.elements;
     for (var i = 0; i < n; i++) {
       var p = particles[i];
-      // Compute initial position (t=0) for the position attribute
-      var theta0 = p.theta;
-      var ct = Math.cos(theta0), st = Math.sin(theta0);
-      var cx = 0, cy = 0, cz = 0;
-      // We don't have radiusA/radiusB here, so use a placeholder
-      // The actual position is computed in the shader
       pos[i * 3] = 0; pos[i * 3 + 1] = 0; pos[i * 3 + 2] = 0;
-      aTheta[i] = p.theta;
+      aStreamRadius[i] = p.streamRadius;
+      aStreamPos[i] = p.streamPos;
+      aSeed[i] = p.seed;
       aWidthOffset[i] = p.widthOffset;
       aThicknessOffset[i] = p.thicknessOffset;
       aPhase[i] = p.phase;
@@ -600,7 +678,9 @@ import * as THREE from './vendor/three.module.min.js';
     }
 
     geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-    geo.setAttribute("aTheta", new THREE.BufferAttribute(aTheta, 1));
+    geo.setAttribute("aStreamRadius", new THREE.BufferAttribute(aStreamRadius, 1));
+    geo.setAttribute("aStreamPos", new THREE.BufferAttribute(aStreamPos, 1));
+    geo.setAttribute("aSeed", new THREE.BufferAttribute(aSeed, 1));
     geo.setAttribute("aWidthOffset", new THREE.BufferAttribute(aWidthOffset, 1));
     geo.setAttribute("aThicknessOffset", new THREE.BufferAttribute(aThicknessOffset, 1));
     geo.setAttribute("aPhase", new THREE.BufferAttribute(aPhase, 1));
@@ -611,11 +691,11 @@ import * as THREE from './vendor/three.module.min.js';
     geo.setAttribute("aDensityBias", new THREE.BufferAttribute(aDensityBias, 1));
   }
 
-  function createRibbonSystem(config, count, isPrimary, densitySeed) {
+  function createFieldSystem(config, count, isPrimary, densitySeed) {
     var rotationMat3 = eulerToMat3(config.inclX, config.inclY, config.inclZ);
-    var cubeViewZ = -camera.position.z; // cube center in view space
+    var cubeViewZ = -camera.position.z;
 
-    var particles = generateRibbonParticles(count, config, isPrimary, densitySeed);
+    var particles = generateFieldParticles(count, config, isPrimary, densitySeed);
     var mainParts = particles.filter(function (p) { return !p.isHighlight; });
     var highlightParts = particles.filter(function (p) { return p.isHighlight; });
 
@@ -626,52 +706,102 @@ import * as THREE from './vendor/three.module.min.js';
       uScrollProgress: uScrollProgress,
       uEntrance: uEntranceProgress,
       uCubeZ: { value: cubeViewZ },
-      uRadiusA: { value: config.radiusA },
-      uRadiusB: { value: config.radiusB },
+      uRadiusBRatio: { value: config.radiusBRatio },
+      uHalfWidth: { value: config.width * 0.5 },
       uRotation: { value: rotationMat3 }
     };
 
     function makeMaterial(cullMode, opacity, isHighlight) {
-      var mat = new THREE.ShaderMaterial({
+      return new THREE.ShaderMaterial({
         uniforms: Object.assign({}, sharedUniforms, {
           uCullMode: { value: cullMode },
           uOpacity: { value: opacity }
         }),
-        vertexShader: ribbonVertexShader,
-        fragmentShader: isHighlight ? ribbonHighlightFragmentShader : ribbonFragmentShader,
+        vertexShader: fieldVertexShader,
+        fragmentShader: isHighlight ? fieldHighlightFragmentShader : fieldFragmentShader,
         transparent: true,
         depthWrite: false,
         depthTest: true,
         blending: isHighlight ? THREE.AdditiveBlending : THREE.NormalBlending
       });
-      return mat;
     }
 
     function makePoints(parts, cullMode, opacity, isHighlight, renderOrder) {
       var geo = new THREE.BufferGeometry();
-      fillRibbonGeometry(geo, parts, rotationMat3);
+      fillFieldGeometry(geo, parts);
       var mat = makeMaterial(cullMode, opacity, isHighlight);
       var pts = new THREE.Points(geo, mat);
       pts.frustumCulled = false;
       pts.renderOrder = renderOrder;
       scene.add(pts);
-      ribbonObjects.push(pts);
-      return pts;
+      fieldObjects.push(pts);
     }
 
-    // Back particles: renderOrder -1 (behind cube)
-    // Front particles: renderOrder 1 (in front of cube)
-    makePoints(mainParts, 0.0, config.opacity, false, -1);       // back main
-    makePoints(mainParts, 1.0, config.opacity, false, 1);        // front main
-    makePoints(highlightParts, 0.0, config.highlightOpacity, true, -1); // back highlight
-    makePoints(highlightParts, 1.0, config.highlightOpacity, true, 1);  // front highlight
+    // Back: renderOrder -1 (behind cube)
+    // Front: renderOrder 1 (in front of cube)
+    makePoints(mainParts, 0.0, config.opacity, false, -1);
+    makePoints(mainParts, 1.0, config.opacity, false, 1);
+    makePoints(highlightParts, 0.0, config.highlightOpacity, true, -1);
+    makePoints(highlightParts, 1.0, config.highlightOpacity, true, 1);
+  }
+
+  // ─── Dust System Creation ─────────────────────────────────
+  function createDustSystem(count, opacity) {
+    var pos = new Float32Array(count * 3);
+    var col = new Float32Array(count * 3);
+    var sz = new Float32Array(count);
+    var ph = new Float32Array(count);
+    var br = new Float32Array(count);
+
+    for (var i = 0; i < count; i++) {
+      var r = 1.8 + Math.random() * 3.2;
+      var theta = Math.random() * Math.PI * 2;
+      var zOff = (Math.random() - 0.5) * 1.5;
+      pos[i * 3] = r * Math.cos(theta);
+      pos[i * 3 + 1] = r * 0.5 * Math.sin(theta);
+      pos[i * 3 + 2] = zOff;
+
+      var colorRoll = Math.random();
+      var color = colorRoll < 0.65 ? COLOR_NAVY : (colorRoll < 0.90 ? COLOR_GREEN : COLOR_PALE_GREEN);
+      col[i * 3] = color[0]; col[i * 3 + 1] = color[1]; col[i * 3 + 2] = color[2];
+      sz[i] = 0.2 + Math.random() * 0.3;
+      ph[i] = Math.random() * Math.PI * 2;
+      br[i] = 0.25 + Math.random() * 0.20;
+    }
+
+    var geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute("aColorMix", new THREE.BufferAttribute(col, 3));
+    geo.setAttribute("aSize", new THREE.BufferAttribute(sz, 1));
+    geo.setAttribute("aPhase", new THREE.BufferAttribute(ph, 1));
+    geo.setAttribute("aBrightness", new THREE.BufferAttribute(br, 1));
+
+    var mat = new THREE.ShaderMaterial({
+      uniforms: {
+        uTime: uTime,
+        uPointScale: uScaleGlobal,
+        uReduceMotion: uReduceMotion,
+        uEntrance: uEntranceProgress,
+        uOpacity: { value: opacity }
+      },
+      vertexShader: dustVertexShader,
+      fragmentShader: dustFragmentShader,
+      transparent: true, depthWrite: false, depthTest: true,
+      blending: THREE.NormalBlending
+    });
+
+    var pts = new THREE.Points(geo, mat);
+    pts.frustumCulled = false;
+    pts.renderOrder = -2;
+    scene.add(pts);
+    fieldObjects.push(pts);
   }
 
   // ─── Init ─────────────────────────────────────────────────
   function init() {
     var device = getDevice();
     var cubeCounts = CUBE_COUNTS[device];
-    var ribbonCounts = RIBBON_COUNTS[device];
+    var fieldCounts = FIELD_COUNTS[device];
 
     scene = new THREE.Scene();
 
@@ -688,8 +818,9 @@ import * as THREE from './vendor/three.module.min.js';
     renderer.setClearColor(0x000000, 0);
 
     createCubeSystem(cubeCounts);
-    createRibbonSystem(RIBBON_PRIMARY, ribbonCounts.primary, true, 0.0);
-    createRibbonSystem(RIBBON_SECONDARY, ribbonCounts.secondary, false, 1.8);
+    createFieldSystem(FIELD_PRIMARY, fieldCounts.primary, true, 0.0);
+    createFieldSystem(FIELD_SECONDARY, fieldCounts.secondary, false, 1.8);
+    createDustSystem(fieldCounts.dust, 0.18);
 
     resize();
     targetEntranceProgress = 1;
@@ -775,7 +906,7 @@ import * as THREE from './vendor/three.module.min.js';
       cubeGroup.scale.setScalar(cubeScale);
     }
 
-    // ── Ribbons (GPU-only, no JS position updates) ──
+    // ── Field (GPU-only, no JS position updates) ──
     uScrollProgress.value = scrollProgress;
     uEntranceProgress.value = entranceProgress;
 
