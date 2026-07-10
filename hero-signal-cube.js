@@ -9,11 +9,10 @@
   var reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   // --- Config ---
-  var COUNTS = { desktop: [720, 1300, 180, 35], tablet: [480, 850, 130, 28], mobile: [260, 500, 80, 18] };
+  var COUNTS = { desktop: [850, 1300, 180, 35], tablet: [480, 850, 130, 28], mobile: [260, 500, 80, 18] };
   var DPR_CAP = 2;
   var FOV = 4.2;
   var VIEWER_DIST = 5;
-  var BREATH = 0.00035; // ~18s cycle
   var CUBE_ROT_RATE = 0.000045; // ~140s per revolution
   var CUBE_TILT_RATE = 0.000012;
   var ARM_SPEEDS = [0.000004, 0.000006, 0.000008]; // rad/ms per arm
@@ -35,7 +34,6 @@
   var scrollProgress = 0, targetScrollProgress = 0;
   var animating = false, rafId = null, lastTime = 0;
   var entranceProgress = 0, targetEntranceProgress = 0;
-  var breathPhase = 0;
 
   var GROUP = { CUBE: 0, STREAM: 1, DRIFT: 2, ACCENT: 3 };
   var GALAXY_OUTER = 4.8;
@@ -82,13 +80,17 @@
 
   // --- Generators ---
   function generateCube(count, half) {
-    var perFace = Math.floor(count * 0.65 / 6);
-    var inner = Math.floor(count * 0.35);
-    var noise = half * 0.18;
+    var perFace = Math.floor(count * 0.75 / 6);
+    var inner = Math.floor(count * 0.25);
+    var noise = half * 0.14;
+    var edgePow = 0.55;
+    function edgeBias() {
+      return (Math.random() < 0.5 ? 1 : -1) * Math.pow(Math.random(), edgePow);
+    }
     for (var face = 0; face < 6; face++) {
       for (var i = 0; i < perFace; i++) {
-        var u = (Math.random() * 2 - 1) * half;
-        var v = (Math.random() * 2 - 1) * half;
+        var u = half * edgeBias();
+        var v = half * edgeBias();
         var w = (Math.random() < 0.5 ? 1 : -1) * half;
         var x, y, z;
         if (face < 2) { x = w; y = u; z = v; }
@@ -99,7 +101,7 @@
         y += (Math.random() - 0.5) * noise;
         z += (Math.random() - 0.5) * noise;
         var color = Math.random() < 0.32 ? 1 : 0;
-        particles.push(new P(GROUP.CUBE, x, y, z, 0.6 + Math.random() * 0.9, color, 0.45 + Math.random() * 0.35));
+        particles.push(new P(GROUP.CUBE, x, y, z, 0.7 + Math.random() * 0.95, color, 0.52 + Math.random() * 0.32));
       }
     }
     for (var j = 0; j < inner; j++) {
@@ -107,7 +109,7 @@
       var v2 = (Math.random() * 2 - 1) * half * 0.75;
       var w2 = (Math.random() * 2 - 1) * half * 0.75;
       var color = Math.random() < 0.25 ? 1 : 0;
-      particles.push(new P(GROUP.CUBE, u2, v2, w2, 0.45 + Math.random() * 0.75, color, 0.35 + Math.random() * 0.35));
+      particles.push(new P(GROUP.CUBE, u2, v2, w2, 0.5 + Math.random() * 0.85, color, 0.42 + Math.random() * 0.32));
     }
   }
 
@@ -136,7 +138,9 @@
       if (Math.random() < 0.05) color = 2;
       var size = 0.7 + Math.random() * 1.2;
       var brightness = 0.55 + band * 0.5 + Math.random() * 0.25;
-      particles.push(new P(GROUP.STREAM, pt[0], pt[1], pt[2], size, color, brightness, { theta: theta, baseR: r, r: r, z: zOff, tiltX: tiltX, tiltY: tiltY, phase: Math.random() * Math.PI * 2, armSpeed: ARM_SPEEDS[arm] }));
+      var extra = { theta: theta, baseR: r, r: r, z: zOff, tiltX: tiltX, tiltY: tiltY, phase: Math.random() * Math.PI * 2, armSpeed: ARM_SPEEDS[arm] };
+      if (r < 2.2) extra.innerFade = true;
+      particles.push(new P(GROUP.STREAM, pt[0], pt[1], pt[2], size, color, brightness, extra));
     }
   }
 
@@ -225,25 +229,6 @@
   }
 
   // --- Draw helpers ---
-  function drawGlow(cx, cy, scale) {
-    var r = scale * 2.2;
-    var g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
-    g.addColorStop(0, "rgba(56, 161, 105, 0.10)");
-    g.addColorStop(0.5, "rgba(56, 161, 105, 0.04)");
-    g.addColorStop(1, "rgba(56, 161, 105, 0)");
-    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
-
-    var g2 = ctx.createRadialGradient(cx + scale * 0.35, cy + scale * 0.25, 0, cx + scale * 0.35, cy + scale * 0.25, scale * 1.4);
-    g2.addColorStop(0, "rgba(56, 161, 105, 0.07)");
-    g2.addColorStop(1, "rgba(56, 161, 105, 0)");
-    ctx.fillStyle = g2; ctx.beginPath(); ctx.arc(cx + scale * 0.35, cy + scale * 0.25, scale * 1.4, 0, Math.PI * 2); ctx.fill();
-
-    var g3 = ctx.createRadialGradient(cx - scale * 0.25, cy - scale * 0.1, 0, cx - scale * 0.25, cy - scale * 0.1, scale * 1.8);
-    g3.addColorStop(0, "rgba(30, 41, 59, 0.035)");
-    g3.addColorStop(1, "rgba(30, 41, 59, 0)");
-    ctx.fillStyle = g3; ctx.beginPath(); ctx.arc(cx - scale * 0.25, cy - scale * 0.1, scale * 1.8, 0, Math.PI * 2); ctx.fill();
-  }
-
   function drawParticle(px, py, r, color, opacity) {
     if (r < 1.1) {
       ctx.globalAlpha = opacity;
@@ -276,20 +261,27 @@
     entranceProgress += (targetEntranceProgress - entranceProgress) * entranceK;
 
     if (!reduceMotion) {
-      breathPhase = time * BREATH;
       pointerSmoothX += (pointerTargetX - pointerSmoothX) * POINTER_SMOOTH;
       pointerSmoothY += (pointerTargetY - pointerSmoothY) * POINTER_SMOOTH;
     }
 
     ctx.clearRect(0, 0, cssW, cssH);
     var cx = cssW * 0.56, cy = cssH * 0.48;
-    drawGlow(cx, cy, scale);
+
+    // Small local glow around the central cube
+    var cubeGlow = ctx.createRadialGradient(cx, cy, 0, cx, cy, scale * 0.45);
+    cubeGlow.addColorStop(0, "rgba(56, 161, 105, 0.10)");
+    cubeGlow.addColorStop(0.5, "rgba(56, 161, 105, 0.04)");
+    cubeGlow.addColorStop(1, "rgba(56, 161, 105, 0)");
+    ctx.fillStyle = cubeGlow;
+    ctx.beginPath();
+    ctx.arc(cx, cy, scale * 0.45, 0, Math.PI * 2);
+    ctx.fill();
 
     // No global galaxy rotation; orientation is fixed by diskTo3D tilt.
     var cosY = 1, sinY = 0, cosX = 1, sinX = 0;
     var timeSeconds = time * 0.001;
 
-    var breath = reduceMotion ? 0 : Math.sin(breathPhase) * 0.02;
     var dispersion = scrollProgress * MAX_DISPERSION;
     var entranceDisp = (1 - entranceProgress) * 0.25;
     var cubeDispStart = Math.max(0, (scrollProgress - 0.6) / 0.4);
@@ -306,10 +298,9 @@
       if (p.group === GROUP.STREAM && p.extra.theta !== undefined) {
         var phase = p.extra.phase || 0;
         var armSpeed = p.extra.armSpeed || ARM_SPEEDS[0];
-        var angleOffset = timeSeconds * armSpeed + Math.sin(timeSeconds * 0.12 + phase) * 0.012;
-        var radiusOffset = Math.sin(timeSeconds * 0.09 + phase) * 0.006;
+        var angleOffset = timeSeconds * armSpeed + Math.sin(timeSeconds * 0.10 + phase) * 0.006;
         var theta = p.extra.theta + angleOffset;
-        var r = Math.max(0.1, p.extra.baseR + radiusOffset);
+        var r = p.extra.baseR;
         var pt = diskTo3D(r, theta, p.extra.z, p.extra.tiltX, p.extra.tiltY);
         ox = pt[0]; oy = pt[1]; oz = pt[2];
       }
@@ -317,10 +308,9 @@
       // Drift motion
       if (p.group === GROUP.DRIFT && p.extra.theta !== undefined) {
         var phase = p.extra.phase || 0;
-        var angleOffset = timeSeconds * p.extra.driftSpeed + Math.sin(timeSeconds * 0.08 + phase) * 0.015;
-        var radiusOffset = Math.sin(timeSeconds * 0.05 + phase) * 0.015;
+        var angleOffset = timeSeconds * p.extra.driftSpeed + Math.sin(timeSeconds * 0.06 + phase) * 0.006;
         var theta = p.extra.theta + angleOffset;
-        var r = Math.max(2.0, p.extra.baseR + radiusOffset);
+        var r = p.extra.baseR;
         var pt = diskTo3D(r, theta, p.extra.z, p.extra.tiltX, p.extra.tiltY);
         ox = pt[0]; oy = pt[1]; oz = pt[2];
       }
@@ -328,10 +318,9 @@
       // Accent motion (energy point stays fixed)
       if (p.group === GROUP.ACCENT && p.extra.theta !== undefined && !p.energy) {
         var phase = p.extra.phase || 0;
-        var angleOffset = timeSeconds * p.extra.accentSpeed + Math.sin(timeSeconds * 0.06 + phase) * 0.01;
-        var radiusOffset = Math.sin(timeSeconds * 0.04 + phase) * 0.008;
+        var angleOffset = timeSeconds * p.extra.accentSpeed + Math.sin(timeSeconds * 0.05 + phase) * 0.005;
         var theta = p.extra.theta + angleOffset;
-        var r = Math.max(1.0, p.extra.baseR + radiusOffset);
+        var r = p.extra.baseR;
         var pt = diskTo3D(r, theta, p.extra.z, p.extra.tiltX, p.extra.tiltY);
         ox = pt[0]; oy = pt[1]; oz = pt[2];
       }
@@ -348,9 +337,6 @@
         rz = oy * scX + rz * ccX;
         ox = rx; oy = ry; oz = rz;
       }
-
-      // Breathing
-      ox *= (1 + breath); oy *= (1 + breath); oz *= (1 + breath);
 
       // Dispersion
       var dispFactor = dispersion + entranceDisp;
@@ -389,7 +375,8 @@
         px: pr2.px, py: pr2.py, depth: pr2.depth,
         size: p.size, color: p.color, brightness: p.brightness,
         z: r2[2], energy: p.energy,
-        group: p.group
+        group: p.group,
+        innerFade: p.extra.innerFade
       });
     }
 
@@ -414,6 +401,12 @@
       var r = pp.size * pp.depth * 2.2;
       var fadeScroll = 1 - scrollProgress * 0.35 * (pp.group === GROUP.DRIFT ? 1 : 0.5);
       op *= Math.max(0.4, fadeScroll);
+
+      if (pp.group === GROUP.CUBE) {
+        r *= 1.08;
+        op *= 1.14;
+      }
+      if (pp.innerFade) op *= 0.65;
 
       // White highlights on light bg: tiny dark shadow then bright dot
       if (pp.color === 2) {

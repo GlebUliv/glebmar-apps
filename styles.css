@@ -186,7 +186,24 @@ a:hover {
   align-items: center;
   padding: 120px 0 100px;
   position: relative;
-  overflow: hidden;
+  overflow: clip;
+}
+
+.hero::after {
+  content: "";
+  position: absolute;
+  inset: -12% -8% -14% 32%;
+  pointer-events: none;
+  z-index: 0;
+  background:
+    radial-gradient(
+      ellipse 60% 52% at 61% 46%,
+      rgba(56, 161, 105, 0.085) 0%,
+      rgba(56, 161, 105, 0.038) 36%,
+      rgba(56, 161, 105, 0.012) 58%,
+      transparent 78%
+    );
+  filter: blur(24px);
 }
 
 .hero__ambient {
@@ -268,26 +285,14 @@ a:hover {
 
 .hero__visual {
   position: absolute;
-  inset: -5% -5% -5% auto;
-  width: 70%;
-  height: 110%;
+  top: -5%;
+  right: -6%;
+  bottom: -5%;
+  left: auto;
+  width: 64%;
+  overflow: visible;
   pointer-events: none;
   z-index: 1;
-}
-
-.hero__visual::before {
-  content: "";
-  position: absolute;
-  inset: 3% -12% 1% -18%;
-  background:
-    radial-gradient(
-      ellipse at 58% 47%,
-      rgba(56, 161, 105, 0.09) 0%,
-      rgba(56, 161, 105, 0.035) 38%,
-      transparent 72%
-    );
-  filter: blur(28px);
-  pointer-events: none;
 }
 
 .hero__cube-canvas {
@@ -295,21 +300,25 @@ a:hover {
   height: 100%;
   display: block;
   background: transparent;
+  border: 0;
+  box-shadow: none;
   -webkit-mask-image:
     radial-gradient(
-      ellipse 100% 85% at 56% 48%,
+      ellipse 82% 72% at 54% 48%,
       #000 0%,
-      #000 60%,
-      rgba(0, 0, 0, 0.8) 72%,
-      transparent 88%
+      #000 52%,
+      rgba(0, 0, 0, 0.88) 64%,
+      rgba(0, 0, 0, 0.48) 78%,
+      transparent 100%
     );
   mask-image:
     radial-gradient(
-      ellipse 100% 85% at 56% 48%,
+      ellipse 82% 72% at 54% 48%,
       #000 0%,
-      #000 60%,
-      rgba(0, 0, 0, 0.8) 72%,
-      transparent 88%
+      #000 52%,
+      rgba(0, 0, 0, 0.88) 64%,
+      rgba(0, 0, 0, 0.48) 78%,
+      transparent 100%
     );
 }
 
@@ -794,14 +803,14 @@ hr {
 /* Responsive */
 @media (max-width: 1200px) {
   .hero__visual {
-    width: 58%;
+    width: 62%;
     inset: -4% -5% -4% auto;
   }
 }
 
 @media (max-width: 900px) {
   .hero__visual {
-    width: 54%;
+    width: 58%;
     inset: -3% -4% -3% auto;
   }
 }
@@ -830,9 +839,6 @@ hr {
     margin: 0 -14px;
   }
 
-  .hero__visual::before {
-    inset: 5% -8% 1% -8%;
-  }
 
   .hero__glow--1 {
     width: 350px;
