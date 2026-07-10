@@ -15,14 +15,18 @@
   var VIEWER_DIST = 5;
   var CUBE_ROT_RATE = 0.000045; // ~140s per revolution
   var CUBE_TILT_RATE = 0.000012;
-  var STREAM_BASE_ANGULAR_SPEED = 0.0028; // rad/s
-  var STREAM_ARM_MULT = [1.00, 0.92, 1.07];
-  var STREAM_SPEED_VARIATION = 0.12;
-  var DRIFT_ANGULAR_SPEED = 0.0012; // rad/s, ~43% of stream base
-  var ACCENT_ANGULAR_SPEED = 0.0016; // rad/s
+  var STREAM_BASE_ANGULAR_SPEED = 0.0205; // rad/s
+  var STREAM_ARM_MULT = [1.00, 0.90, 1.10];
+  var STREAM_SPEED_VARIATION = 0.06;
+  var DRIFT_STREAM_RATIO = 0.55; // drift moves at 55% of local stream speed
+  var ACCENT_STREAM_RATIO = 1.10; // accents move at ~110% of local stream speed
+  var TRACER_STREAM_RATIO = 1.25; // tracers move at ~125% of local stream speed
   var ACCENT_PULSE_COUNT = 4;
   var ACCENT_PULSE_AMP = 0.05;
   var SEPARATION_REDUCTION = 0.55;
+  var TRACER_COUNTS = { desktop: 14, tablet: 10, mobile: 6 };
+  var FLOW_GROUP_COUNTS = { desktop: 4, tablet: 3, mobile: 3 };
+  var FLOW_GROUP_SIZE = 12;
   var POINTER_RADIUS = 130;
   var POINTER_FORCE = 0.09;
   var POINTER_SMOOTH = 0.06;
@@ -81,6 +85,11 @@
     var x3 = x * cy + z2 * sy;
     var z3 = -x * sy + z2 * cy;
     return [x3, y2 * 0.95, z3];
+  }
+
+  function getRadiusSpeedFactor(r, inner, outer) {
+    var normalizedRadius = (r - inner) / Math.max(0.001, outer - inner);
+    return Math.max(0.58, Math.min(1.15, 1.15 - normalizedRadius * 0.55));
   }
 
   // --- Generators ---
@@ -165,6 +174,74 @@
     }
   }
 
+  function generateTracers(count) {
+    var arms = 3;
+    var inner = 1.8;
+    var outer = GALAXY_OUTER;
+    var armWidths = [0.34, 0.30, 0.26];
+    var armTwists = [0.80, 0.85, 0.90];
+    var thickness = 0.28;
+    var tiltX = -0.22, tiltY = -0.18;
+    for (var i = 0; i < count; i++) {
+      var arm = i % arms;
+      var u = Math.random();
+      var rBase = inner + (outer - inner) * (u * u);
+      var armAngle = (arm / arms) * Math.PI * 2 + (Math.random() * 2 - 1) * armWidths[arm];
+      var theta = armAngle + rBase * armTwists[arm];
+      var band = Math.cos(arms * (theta - rBase * armTwists[arm])) * 0.5 + 0.5;
+      rBase += (Math.random() - 0.5) * 0.18 * (1 - band * 0.4);
+      var r = rBase;
+      var zOff = (Math.random() - 0.5) * thickness;
+      var pt = diskTo3D(r, theta, zOff, tiltX, tiltY);
+      var color = Math.random() < 0.55 ? 1 : 2;
+      var size = 0.55 + Math.random() * 0.35;
+      var brightness = 0.80 + Math.random() * 0.15;
+      var speedVariation = 1 + (Math.random() * 2 - 1) * STREAM_SPEED_VARIATION;
+      var extra = {
+        theta: theta, baseR: r, z: zOff, tiltX: tiltX, tiltY: tiltY,
+        phase: Math.random() * Math.PI * 2, arm: arm, tracer: true,
+        baseAngularSpeed: STREAM_BASE_ANGULAR_SPEED * STREAM_ARM_MULT[arm] * TRACER_STREAM_RATIO,
+        speedVariation: speedVariation, innerRadius: inner, outerRadius: outer
+      };
+      particles.push(new P(GROUP.STREAM, pt[0], pt[1], pt[2], size, color, brightness, extra));
+    }
+  }
+
+  function generateFlowGroups(groupCount, groupSize) {
+    var arms = 3;
+    var inner = 1.8;
+    var outer = GALAXY_OUTER;
+    var armWidths = [0.34, 0.30, 0.26];
+    var armTwists = [0.80, 0.85, 0.90];
+    var thickness = 0.28;
+    var tiltX = -0.22, tiltY = -0.18;
+    for (var g = 0; g < groupCount; g++) {
+      var arm = g % arms;
+      var u = 0.15 + Math.random() * 0.75;
+      var rBase = inner + (outer - inner) * (u * u);
+      var armAngle = (arm / arms) * Math.PI * 2 + (Math.random() * 2 - 1) * (armWidths[arm] * 0.4);
+      var thetaBase = armAngle + rBase * armTwists[arm];
+      for (var k = 0; k < groupSize; k++) {
+        var r = rBase + (Math.random() * 2 - 1) * 0.18;
+        var theta = thetaBase + (Math.random() * 2 - 1) * 0.10;
+        var zOff = (Math.random() - 0.5) * thickness * 0.8;
+        var pt = diskTo3D(r, theta, zOff, tiltX, tiltY);
+        var color = Math.random() < 0.40 ? 1 : 0;
+        if (Math.random() < 0.08) color = 2;
+        var size = 0.65 + Math.random() * 0.80;
+        var brightness = 0.65 + Math.random() * 0.25;
+        var speedVariation = 1 + (Math.random() * 2 - 1) * STREAM_SPEED_VARIATION;
+        var extra = {
+          theta: theta, baseR: r, z: zOff, tiltX: tiltX, tiltY: tiltY,
+          phase: Math.random() * Math.PI * 2, arm: arm, flowGroup: g,
+          baseAngularSpeed: STREAM_BASE_ANGULAR_SPEED * STREAM_ARM_MULT[arm],
+          speedVariation: speedVariation, innerRadius: inner, outerRadius: outer
+        };
+        particles.push(new P(GROUP.STREAM, pt[0], pt[1], pt[2], size, color, brightness, extra));
+      }
+    }
+  }
+
   function generateDrift(count) {
     var tiltX = -0.22, tiltY = -0.18;
     for (var i = 0; i < count; i++) {
@@ -177,7 +254,7 @@
       var size = 0.5 + Math.random() * 0.9;
       var brightness = 0.45 + Math.random() * 0.45;
       var speedVariation = 1 + (Math.random() * 2 - 1) * STREAM_SPEED_VARIATION;
-      particles.push(new P(GROUP.DRIFT, pt[0], pt[1], pt[2], size, color, brightness, { theta: theta, baseR: r, z: zOff, tiltX: tiltX, tiltY: tiltY, phase: Math.random() * Math.PI * 2, baseAngularSpeed: DRIFT_ANGULAR_SPEED, speedVariation: speedVariation }));
+      particles.push(new P(GROUP.DRIFT, pt[0], pt[1], pt[2], size, color, brightness, { theta: theta, baseR: r, z: zOff, tiltX: tiltX, tiltY: tiltY, phase: Math.random() * Math.PI * 2, speedVariation: speedVariation, innerRadius: 1.8, outerRadius: GALAXY_OUTER }));
     }
   }
 
@@ -196,7 +273,7 @@
       var size = 1.1 + Math.random() * 2.0;
       var brightness = 0.85 + Math.random() * 0.15;
       var speedVariation = 1 + (Math.random() * 2 - 1) * STREAM_SPEED_VARIATION;
-      var extra = { theta: theta, baseR: r, z: zOff, tiltX: tiltX, tiltY: tiltY, phase: Math.random() * Math.PI * 2, baseAngularSpeed: ACCENT_ANGULAR_SPEED, speedVariation: speedVariation, pulse: pulseIndices[i] };
+      var extra = { theta: theta, baseR: r, z: zOff, tiltX: tiltX, tiltY: tiltY, phase: Math.random() * Math.PI * 2, speedVariation: speedVariation, pulse: pulseIndices[i], innerRadius: 1.8, outerRadius: GALAXY_OUTER };
       particles.push(new P(GROUP.ACCENT, pt[0], pt[1], pt[2], size, color, brightness, extra));
     }
     // Energy point near lower-right orbit
@@ -208,8 +285,11 @@
   function generateAll() {
     particles = [];
     var c = COUNTS[getDevice()];
+    var device = getDevice();
     generateCube(c[0], 0.30);
     generateStream(c[1]);
+    generateTracers(TRACER_COUNTS[device]);
+    generateFlowGroups(FLOW_GROUP_COUNTS[device], FLOW_GROUP_SIZE);
     generateDrift(c[2]);
     generateAccents(c[3]);
   }
@@ -332,10 +412,9 @@
       if (p.group === GROUP.STREAM && p.extra.theta !== undefined) {
         var theta = p.extra.theta;
         if (!reduceMotion) {
-          var normalizedRadius = (p.extra.baseR - p.extra.innerRadius) / Math.max(0.001, p.extra.outerRadius - p.extra.innerRadius);
-          var radiusSpeedFactor = 1 - normalizedRadius * 0.35; // inner slightly faster
+          var radiusSpeedFactor = getRadiusSpeedFactor(p.extra.baseR, p.extra.innerRadius, p.extra.outerRadius);
           var angularSpeed = p.extra.baseAngularSpeed * radiusSpeedFactor * p.extra.speedVariation;
-          var microDrift = Math.sin(timeSeconds * 0.07 + p.extra.phase) * 0.0035;
+          var microDrift = Math.sin(timeSeconds * 0.07 + p.extra.phase) * 0.0015;
           theta += timeSeconds * angularSpeed + microDrift;
         }
         var r = p.extra.baseR;
@@ -343,12 +422,13 @@
         ox = pt[0]; oy = pt[1]; oz = pt[2];
       }
 
-      // Drift motion: slow tangential angular drift only
+      // Drift motion: tangential drift at 45–60% of local stream speed
       if (p.group === GROUP.DRIFT && p.extra.theta !== undefined) {
         var theta = p.extra.theta;
         if (!reduceMotion) {
-          var angularSpeed = p.extra.baseAngularSpeed * p.extra.speedVariation;
-          var microDrift = Math.sin(timeSeconds * 0.06 + p.extra.phase) * 0.003;
+          var radiusSpeedFactor = getRadiusSpeedFactor(p.extra.baseR, p.extra.innerRadius, p.extra.outerRadius);
+          var angularSpeed = STREAM_BASE_ANGULAR_SPEED * radiusSpeedFactor * DRIFT_STREAM_RATIO * p.extra.speedVariation;
+          var microDrift = Math.sin(timeSeconds * 0.06 + p.extra.phase) * 0.0015;
           theta += timeSeconds * angularSpeed + microDrift;
         }
         var r = p.extra.baseR;
@@ -356,12 +436,13 @@
         ox = pt[0]; oy = pt[1]; oz = pt[2];
       }
 
-      // Accent motion: follow slow tangential stream drift (energy point stays fixed)
+      // Accent motion: tangential drift at ~110% of local stream speed (energy point stays fixed)
       if (p.group === GROUP.ACCENT && p.extra.theta !== undefined && !p.energy) {
         var theta = p.extra.theta;
         if (!reduceMotion) {
-          var angularSpeed = p.extra.baseAngularSpeed * p.extra.speedVariation;
-          var microDrift = Math.sin(timeSeconds * 0.05 + p.extra.phase) * 0.0025;
+          var radiusSpeedFactor = getRadiusSpeedFactor(p.extra.baseR, p.extra.innerRadius, p.extra.outerRadius);
+          var angularSpeed = STREAM_BASE_ANGULAR_SPEED * radiusSpeedFactor * ACCENT_STREAM_RATIO * p.extra.speedVariation;
+          var microDrift = Math.sin(timeSeconds * 0.05 + p.extra.phase) * 0.0015;
           theta += timeSeconds * angularSpeed + microDrift;
         }
         var r = p.extra.baseR;
