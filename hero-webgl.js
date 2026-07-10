@@ -33,29 +33,43 @@ import * as THREE from './vendor/three.module.min.js';
     mobile:  { surface: 3150,  edges: 945,  internal: 1155, core: 250  }
   };
 
-  var ORBIT_COUNTS = {
-    desktop: [2000, 800, 300, 40],
-    tablet:  [1200, 500, 200, 28],
-    mobile:  [700,  300, 120, 18]
+  // ─── Ribbon Config ────────────────────────────────────────
+  // Cube width = 2 * CUBE_HALF = 1.1
+  var CUBE_WIDTH = 2 * CUBE_HALF;
+
+  var RIBBON_PRIMARY = {
+    radiusA: 1.85 * CUBE_WIDTH,       // major radius
+    radiusB: 0.82 * 1.85 * CUBE_WIDTH, // minor radius (0.82 of major)
+    width: 0.24,                       // ribbon width (normalized)
+    thickness: 0.13,                   // ribbon thickness
+    inclX: -18 * Math.PI / 180,
+    inclY: 13 * Math.PI / 180,
+    inclZ: -10 * Math.PI / 180,
+    baseSpeed: 2 * Math.PI / 90,       // 90s per traversal
+    opacity: 0.92,
+    highlightOpacity: 0.50,
+    highlightFraction: 0.04
   };
 
-  var ORBIT_OPACITY = { primary: 0.07, secondary: 0.03, dust: 0.02, accents: 0.0 };
+  var RIBBON_SECONDARY = {
+    radiusA: 1.30 * CUBE_WIDTH,
+    radiusB: 0.75 * 1.30 * CUBE_WIDTH,
+    width: 0.15,
+    thickness: 0.08,
+    inclX: 5 * Math.PI / 180,
+    inclY: -8 * Math.PI / 180,
+    inclZ: 18 * Math.PI / 180,
+    baseSpeed: 2 * Math.PI / 115,      // 115s per traversal
+    opacity: 0.78,
+    highlightOpacity: 0.40,
+    highlightFraction: 0.05
+  };
 
-  var GALAXY_OUTER = 4.8;
-  var POINTER_RADIUS = 130;
-  var POINTER_FORCE = 0.09;
-  var SPRING = 0.032;
-  var DAMPING = 0.94;
-  var MAX_DISPERSION = 0.85;
-
-  var STREAM_AMPLITUDE_A = 0.018;
-  var STREAM_AMPLITUDE_B = 0.006;
-  var STREAM_FREQUENCY_A = 0.095;
-  var STREAM_FREQUENCY_B = 0.155;
-  var STREAM_ARM_AMPLITUDE = 0.010;
-  var STREAM_ARM_FREQUENCY = [0.055, 0.065, 0.075];
-  var TRACER_AMPLITUDE = 0.045;
-  var TRACER_FREQUENCY = 0.165;
+  var RIBBON_COUNTS = {
+    desktop: { primary: 24000, secondary: 11000 },
+    tablet:  { primary: 14000, secondary: 6500 },
+    mobile:  { primary: 8000,  secondary: 3500 }
+  };
 
   // ─── Colors ───────────────────────────────────────────────
   var COLOR_NAVY       = [0.118, 0.161, 0.231];
@@ -66,7 +80,7 @@ import * as THREE from './vendor/three.module.min.js';
   // ─── State ────────────────────────────────────────────────
   var renderer, scene, camera;
   var cubeGroup;
-  var orbitSystems = [];
+  var ribbonObjects = [];
   var animating = false, rafId = null, lastTime = 0;
   var scrollProgress = 0, targetScrollProgress = 0;
   var entranceProgress = 0, targetEntranceProgress = 0;
@@ -80,6 +94,8 @@ import * as THREE from './vendor/three.module.min.js';
   var uTime = { value: 0 };
   var uScaleGlobal = { value: 20 };
   var uReduceMotion = { value: reduceMotion ? 1.0 : 0.0 };
+  var uScrollProgress = { value: 0 };
+  var uEntranceProgress = { value: 0 };
 
   // ─── Helpers ──────────────────────────────────────────────
   function getDevice() {
@@ -95,20 +111,31 @@ import * as THREE from './vendor/three.module.min.js';
     return Math.sqrt(-2 * Math.log(u)) * Math.cos(2 * Math.PI * v);
   }
 
-  function diskTo3D(r, theta, z, tiltX, tiltY) {
-    var rNorm = r / GALAXY_OUTER;
-    var x = rNorm * Math.cos(theta);
-    var y = rNorm * Math.sin(theta) * 0.46;
-    var cx = Math.cos(tiltX), sx = Math.sin(tiltX);
-    var cy = Math.cos(tiltY), sy = Math.sin(tiltY);
-    var y2 = y * cx - z * sx;
-    var z2 = y * sx + z * cx;
-    var x3 = x * cy + z2 * sy;
-    var z3 = -x * sy + z2 * cy;
-    return [x3, y2 * 0.95, z3];
+  function eulerToMat3(x, y, z) {
+    var e = new THREE.Euler(x, y, z, 'XYZ');
+    var m = new THREE.Matrix4().makeRotationFromEuler(e);
+    return new THREE.Matrix3().setFromMatrix4(m);
   }
 
-  // ─── Cube Shaders ─────────────────────────────────────────
+  // Weighted theta sampling for density variation
+  // Creates 3 denser sectors and 1 thinner gap
+  function sampleDenseTheta(seedOffset) {
+    var theta;
+    var attempts = 0;
+    while (attempts < 20) {
+      theta = Math.random() * Math.PI * 2;
+      // Density function: 3 peaks at ~0, ~2.1, ~4.2; gap at ~3.5
+      var density = 0.45
+        + 0.30 * Math.cos(theta * 1.5 + (seedOffset || 0))
+        + 0.15 * Math.cos(theta * 3.0 + (seedOffset || 0) + 0.7);
+      density = Math.max(0.1, density);
+      if (Math.random() < density) return theta;
+      attempts++;
+    }
+    return theta;
+  }
+
+  // ─── Cube Shaders (LOCKED — unchanged from V1) ────────────
   var cubeVertexShader = [
     "attribute float size;",
     "attribute float brightness;",
@@ -162,7 +189,7 @@ import * as THREE from './vendor/three.module.min.js';
     "}"
   ].join("\n");
 
-  // ─── Cube Particle Generation ─────────────────────────────
+  // ─── Cube Particle Generation (LOCKED — unchanged from V1) ─
   function pickSurfaceColor() {
     var r = Math.random();
     if (r < 0.55) return COLOR_NAVY;
@@ -300,7 +327,7 @@ import * as THREE from './vendor/three.module.min.js';
     };
   }
 
-  // ─── Cube System Creation ─────────────────────────────────
+  // ─── Cube System Creation (LOCKED — unchanged from V1) ────
   function fillGeometry(geo, particles) {
     var n = particles.length;
     var pos = new Float32Array(n * 3);
@@ -351,6 +378,7 @@ import * as THREE from './vendor/three.module.min.js';
     });
     var mainPoints = new THREE.Points(mainGeo, mainMat);
     mainPoints.frustumCulled = false;
+    mainPoints.renderOrder = 0;
     cubeGroup.add(mainPoints);
 
     var coreParts = [];
@@ -370,146 +398,280 @@ import * as THREE from './vendor/three.module.min.js';
     });
     var corePoints = new THREE.Points(coreGeo, coreMat);
     corePoints.frustumCulled = false;
+    corePoints.renderOrder = 0;
     cubeGroup.add(corePoints);
 
     scene.add(cubeGroup);
   }
 
-  // ─── Orbit Shaders ────────────────────────────────────────
-  var orbitVertexShader = [
-    "attribute float size;",
-    "attribute vec3 color;",
-    "uniform float uScale;",
+  // ─── Ribbon Shaders ───────────────────────────────────────
+  var ribbonVertexShader = [
+    "attribute float aTheta;",
+    "attribute float aWidthOffset;",
+    "attribute float aThicknessOffset;",
+    "attribute float aPhase;",
+    "attribute float aSpeed;",
+    "attribute float aSize;",
+    "attribute float aBrightness;",
+    "attribute vec3 aColorMix;",
+    "attribute float aDensityBias;",
+    "uniform float uTime;",
+    "uniform float uPointScale;",
+    "uniform float uReduceMotion;",
+    "uniform float uScrollProgress;",
+    "uniform float uEntrance;",
+    "uniform float uCullMode;",
+    "uniform float uCubeZ;",
+    "uniform float uRadiusA;",
+    "uniform float uRadiusB;",
+    "uniform mat3 uRotation;",
     "varying vec3 vColor;",
+    "varying float vBrightness;",
     "void main() {",
-    "  vColor = color;",
-    "  vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);",
-    "  gl_PointSize = max(1.0, size * uScale / -mvPosition.z);",
+    "  float theta = aTheta + (uReduceMotion > 0.5 ? 0.0 : uTime * aSpeed);",
+    "  float ct = cos(theta);",
+    "  float st = sin(theta);",
+    "  vec3 centerLocal = vec3(uRadiusA * ct, uRadiusB * st, 0.0);",
+    "  vec3 normalLocal = normalize(vec3(uRadiusB * ct, uRadiusA * st, 0.0));",
+    "  vec3 binormalLocal = vec3(0.0, 0.0, 1.0);",
+    "  vec3 center = uRotation * centerLocal;",
+    "  vec3 normal = uRotation * normalLocal;",
+    "  vec3 binormal = uRotation * binormalLocal;",
+    "  vec3 worldPos = center + normal * aWidthOffset + binormal * aThicknessOffset;",
+    "  worldPos *= mix(0.75, 1.0, uEntrance);",
+    "  worldPos += normalize(worldPos + vec3(0.001)) * uScrollProgress * 0.4;",
+    "  vec4 mvPosition = modelViewMatrix * vec4(worldPos, 1.0);",
+    "  float zDiff = mvPosition.z - uCubeZ;",
+    "  if (uCullMode < 0.5 && zDiff > 0.0) {",
+    "    gl_PointSize = 0.0;",
+    "    gl_Position = vec4(2.0, 2.0, 2.0, 1.0);",
+    "    return;",
+    "  }",
+    "  if (uCullMode > 0.5 && zDiff <= 0.0) {",
+    "    gl_PointSize = 0.0;",
+    "    gl_Position = vec4(2.0, 2.0, 2.0, 1.0);",
+    "    return;",
+    "  }",
+    "  float distToCenter = length(mvPosition.xy);",
+    "  float clarityRadius = 0.65;",
+    "  float clarityFactor = smoothstep(clarityRadius, clarityRadius * 1.9, distToCenter);",
+    "  float frontWeight = smoothstep(-0.15, 0.35, zDiff);",
+    "  float densityMod = 0.75 + 0.15 * sin(theta * 1.5) + 0.10 * cos(theta * 2.5 + 0.7);",
+    "  float shimmer = uReduceMotion > 0.5 ? 0.0 : sin(uTime * 0.5 + aPhase) * 0.06;",
+    "  vColor = aColorMix;",
+    "  vBrightness = aBrightness * densityMod * (1.0 + shimmer);",
+    "  vBrightness *= mix(1.0, mix(0.15, 1.0, clarityFactor), frontWeight);",
+    "  float depth = -mvPosition.z;",
+    "  float depthFactor = smoothstep(3.0, 7.5, depth);",
+    "  gl_PointSize = max(1.0, aSize * uPointScale * (1.0 - depthFactor * 0.25) / depth);",
     "  gl_Position = projectionMatrix * mvPosition;",
     "}"
   ].join("\n");
 
-  var orbitFragmentShader = [
+  var ribbonFragmentShader = [
     "varying vec3 vColor;",
+    "varying float vBrightness;",
     "uniform float uOpacity;",
     "void main() {",
     "  vec2 coord = gl_PointCoord - vec2(0.5);",
     "  float dist = length(coord);",
     "  if (dist > 0.5) discard;",
-    "  float alpha = smoothstep(0.5, 0.15, dist);",
-    "  gl_FragColor = vec4(vColor, alpha * uOpacity);",
+    "  float alpha = smoothstep(0.5, 0.10, dist);",
+    "  gl_FragColor = vec4(vColor * vBrightness, alpha * uOpacity);",
     "}"
   ].join("\n");
 
-  // ─── Orbit Particle System ────────────────────────────────
-  function OrbitParticleSystem(count, opacity, generator) {
-    this.count = count;
-    this.positions = new Float32Array(count * 3);
-    this.colors = new Float32Array(count * 3);
-    this.sizes = new Float32Array(count);
-    this.vx = new Float32Array(count);
-    this.vy = new Float32Array(count);
-    this.vz = new Float32Array(count);
-    this.ox = new Float32Array(count);
-    this.oy = new Float32Array(count);
-    this.oz = new Float32Array(count);
-    this.extras = [];
+  var ribbonHighlightFragmentShader = [
+    "varying vec3 vColor;",
+    "varying float vBrightness;",
+    "uniform float uOpacity;",
+    "void main() {",
+    "  vec2 coord = gl_PointCoord - vec2(0.5);",
+    "  float dist = length(coord);",
+    "  if (dist > 0.5) discard;",
+    "  float alpha = smoothstep(0.5, 0.0, dist);",
+    "  gl_FragColor = vec4(vColor * vBrightness * 1.4, alpha * uOpacity);",
+    "}"
+  ].join("\n");
 
-    var geo = new THREE.BufferGeometry();
-    geo.setAttribute("position", new THREE.BufferAttribute(this.positions, 3));
-    geo.setAttribute("color", new THREE.BufferAttribute(this.colors, 3));
-    geo.setAttribute("size", new THREE.BufferAttribute(this.sizes, 1));
+  // ─── Ribbon Particle Generation ───────────────────────────
+  function pickPrimaryColor() {
+    var r = Math.random();
+    if (r < 0.60) return COLOR_NAVY;
+    if (r < 0.90) return COLOR_GREEN;
+    return Math.random() < 0.5 ? COLOR_PALE_GREEN : COLOR_SOFT_WHITE;
+  }
 
-    var mat = new THREE.ShaderMaterial({
-      uniforms: { uOpacity: { value: opacity }, uScale: uScaleGlobal },
-      vertexShader: orbitVertexShader,
-      fragmentShader: orbitFragmentShader,
-      transparent: true, depthWrite: false,
-      blending: THREE.NormalBlending
-    });
-    this.points = new THREE.Points(geo, mat);
-    this.points.frustumCulled = false;
-    scene.add(this.points);
+  function pickSecondaryColor() {
+    var r = Math.random();
+    if (r < 0.45) return COLOR_NAVY;
+    if (r < 0.85) return COLOR_GREEN;
+    return Math.random() < 0.5 ? COLOR_PALE_GREEN : COLOR_SOFT_WHITE;
+  }
 
-    for (var i = 0; i < count; i++) {
-      var gen = generator(i, count);
-      this.ox[i] = gen.x; this.oy[i] = gen.y; this.oz[i] = gen.z;
-      this.positions[i * 3] = gen.x;
-      this.positions[i * 3 + 1] = gen.y;
-      this.positions[i * 3 + 2] = gen.z;
-      this.colors[i * 3] = gen.r;
-      this.colors[i * 3 + 1] = gen.g;
-      this.colors[i * 3 + 2] = gen.b;
-      this.sizes[i] = gen.size;
-      this.extras.push(gen.extra || {});
+  function pickHighlightColor() {
+    return Math.random() < 0.7 ? COLOR_GREEN : COLOR_PALE_GREEN;
+  }
+
+  function generateRibbonParticles(count, config, isPrimary, densitySeed) {
+    var particles = [];
+    var highlightCount = Math.floor(count * config.highlightFraction);
+    var mainCount = count - highlightCount;
+    var colorPicker = isPrimary ? pickPrimaryColor : pickSecondaryColor;
+    var sizeBase = isPrimary ? 0.7 : 0.5;
+    var sizeRange = isPrimary ? 1.0 : 0.7;
+    var brightnessBase = isPrimary ? 0.80 : 0.70;
+    var brightnessRange = isPrimary ? 0.20 : 0.20;
+    var halfWidth = config.width * 0.5;
+    var halfThickness = config.thickness * 0.5;
+
+    for (var i = 0; i < mainCount; i++) {
+      var theta = sampleDenseTheta(densitySeed);
+      var c = colorPicker();
+      particles.push({
+        theta: theta,
+        widthOffset: (Math.random() * 2 - 1) * halfWidth * Math.pow(Math.random(), 0.7),
+        thicknessOffset: (Math.random() * 2 - 1) * halfThickness,
+        phase: Math.random() * Math.PI * 2,
+        speed: config.baseSpeed * (0.96 + Math.random() * 0.08),
+        size: sizeBase + Math.random() * sizeRange,
+        brightness: brightnessBase + Math.random() * brightnessRange,
+        color: c,
+        densityBias: 0.5 + 0.3 * Math.cos(theta * 1.5),
+        isHighlight: false
+      });
     }
+
+    for (var j = 0; j < highlightCount; j++) {
+      var thetaH = sampleDenseTheta(densitySeed + 1.5);
+      var cH = pickHighlightColor();
+      particles.push({
+        theta: thetaH,
+        widthOffset: (Math.random() * 2 - 1) * halfWidth * 0.6,
+        thicknessOffset: (Math.random() * 2 - 1) * halfThickness * 0.5,
+        phase: Math.random() * Math.PI * 2,
+        speed: config.baseSpeed * (0.96 + Math.random() * 0.08),
+        size: 0.6 + Math.random() * 0.8,
+        brightness: 0.75 + Math.random() * 0.25,
+        color: cH,
+        densityBias: 0.7,
+        isHighlight: true
+      });
+    }
+
+    return particles;
   }
 
-  OrbitParticleSystem.prototype.setNeedsUpdate = function () {
-    this.points.geometry.attributes.position.needsUpdate = true;
-  };
+  // ─── Ribbon System Creation ───────────────────────────────
+  function fillRibbonGeometry(geo, particles, rotationMat3) {
+    var n = particles.length;
+    var pos = new Float32Array(n * 3);
+    var aTheta = new Float32Array(n);
+    var aWidthOffset = new Float32Array(n);
+    var aThicknessOffset = new Float32Array(n);
+    var aPhase = new Float32Array(n);
+    var aSpeed = new Float32Array(n);
+    var aSize = new Float32Array(n);
+    var aBrightness = new Float32Array(n);
+    var aColorMix = new Float32Array(n * 3);
+    var aDensityBias = new Float32Array(n);
 
-  // ─── Orbit Generators ─────────────────────────────────────
-  function hexToRgb(hex) {
-    return [((hex >> 16) & 255) / 255, ((hex >> 8) & 255) / 255, (hex & 255) / 255];
+    var e = rotationMat3.elements;
+    for (var i = 0; i < n; i++) {
+      var p = particles[i];
+      // Compute initial position (t=0) for the position attribute
+      var theta0 = p.theta;
+      var ct = Math.cos(theta0), st = Math.sin(theta0);
+      var cx = 0, cy = 0, cz = 0;
+      // We don't have radiusA/radiusB here, so use a placeholder
+      // The actual position is computed in the shader
+      pos[i * 3] = 0; pos[i * 3 + 1] = 0; pos[i * 3 + 2] = 0;
+      aTheta[i] = p.theta;
+      aWidthOffset[i] = p.widthOffset;
+      aThicknessOffset[i] = p.thicknessOffset;
+      aPhase[i] = p.phase;
+      aSpeed[i] = p.speed;
+      aSize[i] = p.size;
+      aBrightness[i] = p.brightness;
+      aColorMix[i * 3] = p.color[0];
+      aColorMix[i * 3 + 1] = p.color[1];
+      aColorMix[i * 3 + 2] = p.color[2];
+      aDensityBias[i] = p.densityBias;
+    }
+
+    geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute("aTheta", new THREE.BufferAttribute(aTheta, 1));
+    geo.setAttribute("aWidthOffset", new THREE.BufferAttribute(aWidthOffset, 1));
+    geo.setAttribute("aThicknessOffset", new THREE.BufferAttribute(aThicknessOffset, 1));
+    geo.setAttribute("aPhase", new THREE.BufferAttribute(aPhase, 1));
+    geo.setAttribute("aSpeed", new THREE.BufferAttribute(aSpeed, 1));
+    geo.setAttribute("aSize", new THREE.BufferAttribute(aSize, 1));
+    geo.setAttribute("aBrightness", new THREE.BufferAttribute(aBrightness, 1));
+    geo.setAttribute("aColorMix", new THREE.BufferAttribute(aColorMix, 3));
+    geo.setAttribute("aDensityBias", new THREE.BufferAttribute(aDensityBias, 1));
   }
-  var C_NAVY = 0x1E293B, C_GREEN = 0x38A169, C_WHITE = 0xFFFFFF;
 
-  function generateOrbitParticle(i, count, params) {
-    var arms = 3;
-    var arm = i % arms;
-    var u = Math.random();
-    var rBase = params.inner + (params.outer - params.inner) * (u * u);
-    var armAngle = (arm / arms) * Math.PI * 2 + (Math.random() * 2 - 1) * params.armWidths[arm];
-    var theta = armAngle + rBase * params.armTwists[arm];
-    var band = Math.cos(arms * (theta - rBase * params.armTwists[arm])) * 0.5 + 0.5;
-    rBase += (Math.random() - 0.5) * 0.22 * (1 - band * 0.4);
-    var zOff = (Math.random() - 0.5) * params.thickness;
-    var pt = diskTo3D(rBase, theta, zOff, params.tiltX, params.tiltY);
-    var color = Math.random() < 0.24 ? C_GREEN : C_NAVY;
-    if (Math.random() < 0.05) color = C_WHITE;
-    var rgb = hexToRgb(color);
-    return {
-      x: pt[0], y: pt[1], z: pt[2],
-      r: rgb[0], g: rgb[1], b: rgb[2],
-      size: params.sizeBase + Math.random() * params.sizeRange,
-      extra: {
-        type: params.type, theta: theta, baseR: rBase, z: zOff,
-        tiltX: params.tiltX, tiltY: params.tiltY,
-        phase: Math.random() * Math.PI * 2, arm: arm,
-        tracer: params.tracer || false
-      }
+  function createRibbonSystem(config, count, isPrimary, densitySeed) {
+    var rotationMat3 = eulerToMat3(config.inclX, config.inclY, config.inclZ);
+    var cubeViewZ = -camera.position.z; // cube center in view space
+
+    var particles = generateRibbonParticles(count, config, isPrimary, densitySeed);
+    var mainParts = particles.filter(function (p) { return !p.isHighlight; });
+    var highlightParts = particles.filter(function (p) { return p.isHighlight; });
+
+    var sharedUniforms = {
+      uTime: uTime,
+      uPointScale: uScaleGlobal,
+      uReduceMotion: uReduceMotion,
+      uScrollProgress: uScrollProgress,
+      uEntrance: uEntranceProgress,
+      uCubeZ: { value: cubeViewZ },
+      uRadiusA: { value: config.radiusA },
+      uRadiusB: { value: config.radiusB },
+      uRotation: { value: rotationMat3 }
     };
-  }
 
-  function generateDustParticle(i, count) {
-    var r = 0.2 + Math.random() * 6.0;
-    var theta = Math.random() * Math.PI * 2;
-    var zOff = (Math.random() - 0.5) * 1.2;
-    var pt = diskTo3D(r, theta, zOff, -0.22, -0.18);
-    var rgb = hexToRgb(Math.random() < 0.25 ? C_GREEN : (Math.random() < 0.4 ? C_WHITE : C_NAVY));
-    return {
-      x: pt[0], y: pt[1], z: pt[2],
-      r: rgb[0], g: rgb[1], b: rgb[2],
-      size: 0.3 + Math.random() * 0.5,
-      extra: { type: "dust", phase: Math.random() * Math.PI * 2 }
-    };
-  }
+    function makeMaterial(cullMode, opacity, isHighlight) {
+      var mat = new THREE.ShaderMaterial({
+        uniforms: Object.assign({}, sharedUniforms, {
+          uCullMode: { value: cullMode },
+          uOpacity: { value: opacity }
+        }),
+        vertexShader: ribbonVertexShader,
+        fragmentShader: isHighlight ? ribbonHighlightFragmentShader : ribbonFragmentShader,
+        transparent: true,
+        depthWrite: false,
+        depthTest: true,
+        blending: isHighlight ? THREE.AdditiveBlending : THREE.NormalBlending
+      });
+      return mat;
+    }
 
-  function getStreamAngularOffset(extra, timeSeconds) {
-    var arm = extra.arm || 0;
-    var armOffset = Math.sin(timeSeconds * STREAM_ARM_FREQUENCY[arm] + arm * 1.9) * STREAM_ARM_AMPLITUDE;
-    var particleOffset = Math.sin(timeSeconds * STREAM_FREQUENCY_A + extra.phase) * STREAM_AMPLITUDE_A
-                       + Math.sin(timeSeconds * STREAM_FREQUENCY_B + extra.phase * 1.7) * STREAM_AMPLITUDE_B;
-    if (extra.tracer) particleOffset += Math.sin(timeSeconds * TRACER_FREQUENCY + extra.phase) * TRACER_AMPLITUDE;
-    return armOffset + particleOffset;
+    function makePoints(parts, cullMode, opacity, isHighlight, renderOrder) {
+      var geo = new THREE.BufferGeometry();
+      fillRibbonGeometry(geo, parts, rotationMat3);
+      var mat = makeMaterial(cullMode, opacity, isHighlight);
+      var pts = new THREE.Points(geo, mat);
+      pts.frustumCulled = false;
+      pts.renderOrder = renderOrder;
+      scene.add(pts);
+      ribbonObjects.push(pts);
+      return pts;
+    }
+
+    // Back particles: renderOrder -1 (behind cube)
+    // Front particles: renderOrder 1 (in front of cube)
+    makePoints(mainParts, 0.0, config.opacity, false, -1);       // back main
+    makePoints(mainParts, 1.0, config.opacity, false, 1);        // front main
+    makePoints(highlightParts, 0.0, config.highlightOpacity, true, -1); // back highlight
+    makePoints(highlightParts, 1.0, config.highlightOpacity, true, 1);  // front highlight
   }
 
   // ─── Init ─────────────────────────────────────────────────
   function init() {
     var device = getDevice();
     var cubeCounts = CUBE_COUNTS[device];
-    var orbitCounts = ORBIT_COUNTS[device];
+    var ribbonCounts = RIBBON_COUNTS[device];
 
     scene = new THREE.Scene();
 
@@ -526,25 +688,8 @@ import * as THREE from './vendor/three.module.min.js';
     renderer.setClearColor(0x000000, 0);
 
     createCubeSystem(cubeCounts);
-
-    // Dimmed orbit systems
-    orbitSystems.push(new OrbitParticleSystem(orbitCounts[0], ORBIT_OPACITY.primary, function (i, c) {
-      return generateOrbitParticle(i, c, {
-        inner: 1.8, outer: GALAXY_OUTER,
-        armWidths: [0.34, 0.30, 0.26], armTwists: [0.80, 0.85, 0.90],
-        thickness: 0.28, tiltX: -0.22, tiltY: -0.18,
-        sizeBase: 0.7, sizeRange: 1.2, type: "primary"
-      });
-    }));
-    orbitSystems.push(new OrbitParticleSystem(orbitCounts[1], ORBIT_OPACITY.secondary, function (i, c) {
-      return generateOrbitParticle(i, c, {
-        inner: 0.9, outer: 3.0,
-        armWidths: [0.40, 0.35, 0.30], armTwists: [1.0, 1.1, 1.2],
-        thickness: 0.18, tiltX: 0.22, tiltY: 0.15,
-        sizeBase: 0.4, sizeRange: 0.8, type: "secondary"
-      });
-    }));
-    orbitSystems.push(new OrbitParticleSystem(orbitCounts[2], ORBIT_OPACITY.dust, generateDustParticle));
+    createRibbonSystem(RIBBON_PRIMARY, ribbonCounts.primary, true, 0.0);
+    createRibbonSystem(RIBBON_SECONDARY, ribbonCounts.secondary, false, 1.8);
 
     resize();
     targetEntranceProgress = 1;
@@ -584,12 +729,6 @@ import * as THREE from './vendor/three.module.min.js';
 
   function onPointerLeave() { pointerActive = false; }
 
-  function projectToScreen(x, y, z) {
-    var v = new THREE.Vector3(x, y, z);
-    v.project(camera);
-    return { x: (v.x * 0.5 + 0.5) * cssW, y: (-v.y * 0.5 + 0.5) * cssH };
-  }
-
   function animate(time) {
     if (!animating) return;
     rafId = requestAnimationFrame(animate);
@@ -616,8 +755,6 @@ import * as THREE from './vendor/three.module.min.js';
 
     var scrollK = 1 - Math.exp(-3.6 * dtSeconds);
     var entranceK = 1 - Math.exp(-1.8 * dtSeconds);
-    var springK = 1 - Math.exp(-SPRING * 60 * dtSeconds);
-    var damping = Math.exp(-(1 - DAMPING) * 60 * dtSeconds);
 
     scrollProgress += (targetScrollProgress - scrollProgress) * scrollK;
     entranceProgress += (targetEntranceProgress - entranceProgress) * entranceK;
@@ -627,7 +764,7 @@ import * as THREE from './vendor/three.module.min.js';
       pointerSmoothY += (pointerTargetY - pointerSmoothY) * 0.06;
     }
 
-    // ── Cube (GPU-only) ──
+    // ── Cube (GPU-only, locked) ──
     uTime.value = timeSeconds;
     if (cubeGroup) {
       if (!reduceMotion) {
@@ -638,56 +775,9 @@ import * as THREE from './vendor/three.module.min.js';
       cubeGroup.scale.setScalar(cubeScale);
     }
 
-    // ── Orbits (dimmed, JS-animated) ──
-    var dispersion = scrollProgress * MAX_DISPERSION;
-    var entranceDisp = (1 - entranceProgress) * 0.25;
-
-    for (var s = 0; s < orbitSystems.length; s++) {
-      var sys = orbitSystems[s];
-      for (var i = 0; i < sys.count; i++) {
-        var ox = sys.ox[i], oy = sys.oy[i], oz = sys.oz[i];
-        if (!reduceMotion) {
-          var extra = sys.extras[i];
-          var theta, r, pt;
-          if (extra.type === "primary" || extra.type === "secondary") {
-            theta = extra.theta + getStreamAngularOffset(extra, timeSeconds);
-            r = extra.baseR;
-            pt = diskTo3D(r, theta, extra.z, extra.tiltX, extra.tiltY);
-            ox = pt[0]; oy = pt[1]; oz = pt[2];
-          } else if (extra.type === "dust") {
-            ox += Math.sin(timeSeconds * 0.08 + extra.phase) * 0.02;
-            oy += Math.cos(timeSeconds * 0.06 + extra.phase) * 0.02;
-          }
-        }
-        var dispFactor = dispersion + entranceDisp;
-        var tx = ox + ox * dispFactor * 0.35;
-        var ty = oy + oy * dispFactor * 0.35;
-        var tz = oz + oz * dispFactor * 0.35;
-
-        if (pointerActive && !reduceMotion) {
-          var sp = projectToScreen(sys.positions[i * 3], sys.positions[i * 3 + 1], sys.positions[i * 3 + 2]);
-          var dpx = sp.x - pointerSmoothX;
-          var dpy = sp.y - pointerSmoothY;
-          var dist = Math.sqrt(dpx * dpx + dpy * dpy);
-          if (dist < POINTER_RADIUS && dist > 0.1) {
-            var force = (1 - dist / POINTER_RADIUS) * POINTER_FORCE * 0.012;
-            sys.vx[i] += (dpx / dist) * force;
-            sys.vy[i] += (dpy / dist) * force;
-          }
-        }
-
-        sys.vx[i] += (tx - sys.positions[i * 3]) * springK;
-        sys.vy[i] += (ty - sys.positions[i * 3 + 1]) * springK;
-        sys.vz[i] += (tz - sys.positions[i * 3 + 2]) * springK;
-        sys.vx[i] *= damping;
-        sys.vy[i] *= damping;
-        sys.vz[i] *= damping;
-        sys.positions[i * 3] += sys.vx[i];
-        sys.positions[i * 3 + 1] += sys.vy[i];
-        sys.positions[i * 3 + 2] += sys.vz[i];
-      }
-      sys.setNeedsUpdate();
-    }
+    // ── Ribbons (GPU-only, no JS position updates) ──
+    uScrollProgress.value = scrollProgress;
+    uEntranceProgress.value = entranceProgress;
 
     renderer.render(scene, camera);
   }
