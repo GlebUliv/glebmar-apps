@@ -199,9 +199,9 @@ Cards contain product information, feature summaries, or grouped content.
 
 ---
 
-## Guardian Signal Cube
+## Guardian Signal Galaxy
 
-The Signal Cube is the Hero's interactive visual focal point — a structured particle field forming a rounded cube. It communicates craftsmanship, precision, and calm technology.
+The Hero visual is a dense, light-background particle galaxy — a compact particle cube at the center of an elliptical spiral stream, with outer drift and bright accents. It communicates protection, depth, and calm technology.
 
 ### Purpose
 
@@ -209,41 +209,83 @@ The Signal Cube is the Hero's interactive visual focal point — a structured pa
 - Provide depth and atmosphere to the Hero section.
 - Reinforce the Guardian brand through restrained green accents.
 
+### Particle Groups
+
+| Group | Description | Approximate Share | Purpose |
+|-------|-------------|-------------------|---------|
+| A | Central particle cube | 15–25% | Recognizable cubic volume, dense point cloud |
+| B | Primary spiral stream | 60–70% | Dominant elliptical galaxy structure |
+| C | Outer drift particles | 8–12% | Extend the field, add depth |
+| D | Light accent particles | 2–4% | Highlights, energy point |
+
 ### Particle Palette
 
-- **Navy/slate particles** (`rgba(30, 41, 59, ~0.6)`): structural depth, ~82% of particles.
-- **Green particles** (`rgba(56, 161, 105, ~0.85)`): signal accents, ~18% of particles.
-- **Ambient glow**: soft radial green halo behind the cube, secondary faint navy glow.
+- **Navy/slate particles** (`rgba(30, 41, 59, ...)`): structural depth, ~65% of visible particles.
+- **Guardian Green particles** (`rgba(56, 161, 105, ...)`): signal accents, ~25%.
+- **Pale/white highlights**: (`rgba(255, 255, 255, ...)`): bright accents, ~10%.
+- **Ambient glow**: soft radial green halo behind the galaxy, secondary faint navy glow.
 - No random rainbow colors. No dense connection lines.
 
 ### Particle Counts
 
-| Breakpoint | Particle Count |
-|------------|----------------|
-| Desktop (≥768px) | 300 |
-| Tablet (480–767px) | 200 |
-| Mobile (<480px) | 120 |
+| Breakpoint | Cube | Stream | Drift | Accents | Total |
+|------------|------|--------|-------|---------|-------|
+| Desktop (≥768px) | 720 | 1300 | 180 | 50 | 2250 |
+| Tablet (480–767px) | 480 | 850 | 130 | 40 | 1500 |
+| Mobile (<480px) | 260 | 500 | 80 | 24 | 864 |
+
+### Hero Canvas Layout
+
+- Hero visual occupies approximately 60% of the Hero width on desktop.
+- Copy remains at ~40% of the Hero width on the left.
+- The visual element is `position: absolute` with `width: 70%` and `height: 110%`, positioned `inset: -5% -5% -5% auto` so it extends slightly beyond the right viewport edge.
+- The canvas is full-bleed within the visual wrapper, has a transparent background, and no border or shadow.
+- A CSS `radial-gradient` mask is applied to the canvas to fade the edges into the page background:
+  - `ellipse 100% 85% at 56% 48%, #000 0%, #000 60%, rgba(0,0,0,0.8) 72%, transparent 88%`
+- An atmospheric bridge behind the canvas (`hero__visual::before`) blends the galaxy with the Hero background using a soft green radial gradient and `blur(28px)`.
+
+### Galaxy Geometry
+
+- Primary stream is an elliptical disk with a 1.65–1.9 width-to-height ratio (ellipse ratio ~0.46).
+- Galaxy tilt is approximately -8° to -16° on both X and Y axes (`tiltX: -0.22`, `tiltY: -0.18`).
+- Three spiral arms wrap around the central cube.
+- Cube width is approximately 22–28% of the galaxy's visible diameter (cube `half` normalized to 0.25).
+- Stream particles are denser near the central cube and along the arms.
+- A bright energy point sits near the lower-right portion of the orbit.
+- Projection scale: `scale = Math.min(cssW, cssH) * 0.54`.
+- Projection center: `cx = cssW * 0.56`, `cy = cssH * 0.48`.
+- Galaxy outer model radius: `GALAXY_OUTER = 4.8` (model coordinates are normalized by this value to fit the visible canvas).
+
+### Cube Geometry
+
+- Cube is composed of particles, not lines.
+- Particles are distributed on the six faces and in several internal layers.
+- Edges have controlled variation and slightly softened corners.
+- Cube rotates independently from the galaxy stream.
 
 ### Motion Timings
 
-- **Y-axis rotation**: ~55 seconds per revolution (`0.00012 rad/ms`).
+- **Galaxy rotation**: ~75 seconds per revolution (`0.00007 rad/ms`).
+- **Cube rotation**: ~105 seconds per revolution (`0.00005 rad/ms`).
 - **X-axis drift**: slower, sinusoidal modulation.
-- **Breathing cycle**: ~10 seconds (`0.0006 rad/ms`), 4% scale amplitude.
-- **Entrance duration**: ~1200ms, particles assemble from slightly dispersed state.
+- **Breathing cycle**: ~15 seconds (`0.00035 rad/ms`), 2% scale amplitude.
+- **Entrance duration**: ~2000ms, particles assemble from 25% dispersed state.
 
 ### Pointer Behavior
 
-- Pointer repels particles within a 100px radius.
-- Maximum displacement: ~12–36 CSS pixels.
-- Damped spring return (`SPRING: 0.045`, `DAMPING: 0.92`).
+- Pointer influences stream, drift, and accent particles within a 130px radius.
+- Cube remains mostly stable.
+- Maximum displacement: ~18–34 CSS pixels.
+- Damped spring return (`SPRING: 0.032`, `DAMPING: 0.94`).
 - No snapping on pointer leave — smooth return.
 
 ### Scroll Behavior
 
-- Scroll progress mapped to dispersion (0.0 = assembled, 1.0 = 70% dispersed).
-- Particles follow deterministic outward directions assigned at initialization.
-- Smooth interpolation with damping (`0.08` lerp factor).
-- Fully reversible — scrolling up reassembles the cube.
+- Scroll progress mapped to normalized Hero position.
+- Progress 0.0–0.45: outer drift and stream start to open.
+- Progress 0.45–0.75: main spiral bands separate and move outward.
+- Progress 0.75–1.0: cube begins dissolving.
+- Fully reversible — scrolling up reassembles the galaxy.
 
 ### Reduced-Motion Behavior
 
@@ -252,7 +294,7 @@ When `prefers-reduced-motion: reduce` is active:
 - Idle rotation disabled.
 - Pointer repulsion disabled.
 - Scroll dispersion disabled.
-- Cube rendered in stable assembled state.
+- Galaxy rendered in stable assembled state.
 - Visual remains visible and attractive.
 
 ### Performance Constraints

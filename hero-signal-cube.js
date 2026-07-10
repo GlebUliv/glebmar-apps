@@ -3,197 +3,204 @@
 
   var canvas = document.querySelector(".hero__cube-canvas");
   if (!canvas) return;
-
   var ctx = canvas.getContext("2d", { alpha: true });
   if (!ctx) return;
 
   var reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
-  // --- Configuration ---
-  var PARTICLE_COUNTS = {
-    desktop: 300,
-    tablet: 200,
-    mobile: 120,
-  };
-
-  var ROTATION_SPEED = 0.00012; // ~55s per revolution
-  var DRIFT_SPEED = 0.00006;
-  var BREATH_SPEED = 0.0006; // ~10s per breath cycle
-  var POINTER_RADIUS = 100;
-  var POINTER_FORCE = 0.12;
-  var SPRING = 0.045;
-  var DAMPING = 0.92;
-  var MAX_DISPERSION = 0.7; // 70% max dispersion
+  // --- Config ---
+  var COUNTS = { desktop: [720, 1300, 180, 50], tablet: [480, 850, 130, 40], mobile: [260, 500, 80, 24] };
   var DPR_CAP = 2;
+  var FOV = 4.2;
+  var VIEWER_DIST = 5;
+  var ROT_GALAXY = 0.00007; // ~75s
+  var ROT_CUBE = 0.00005; // ~105s
+  var BREATH = 0.00035; // ~15s
+  var POINTER_RADIUS = 130;
+  var POINTER_FORCE = 0.07;
+  var SPRING = 0.032;
+  var DAMPING = 0.94;
+  var MAX_DISPERSION = 0.85;
 
   // --- State ---
   var particles = [];
-  var dpr = 1;
-  var cssW = 0;
-  var cssH = 0;
-  var cubeSize = 0;
-  var pointerX = -9999;
-  var pointerY = -9999;
-  var pointerActive = false;
-  var scrollProgress = 0;
-  var targetScrollProgress = 0;
-  var animating = false;
-  var rafId = null;
-  var lastTime = 0;
-  var entranceProgress = 0;
-  var targetEntranceProgress = 0;
-  var rotY = 0;
-  var rotX = 0;
-  var breathPhase = 0;
+  var dpr = 1, cssW = 0, cssH = 0, scale = 0;
+  var pointerX = -9999, pointerY = -9999, pointerActive = false;
+  var scrollProgress = 0, targetScrollProgress = 0;
+  var animating = false, rafId = null, lastTime = 0;
+  var entranceProgress = 0, targetEntranceProgress = 0;
+  var rotY = 0, rotX = 0, breathPhase = 0, galaxyPhase = 0, cubeRotY = 0, cubeRotX = 0;
 
-  // --- Particle ---
-  function Particle(ox, oy, oz, dispersionDir, dispersionDist, rotOffset, vertDrift, size, isGreen) {
-    this.ox = ox;
-    this.oy = oy;
-    this.oz = oz;
-    this.dx = dispersionDir[0];
-    this.dy = dispersionDir[1];
-    this.dz = dispersionDir[2];
-    this.dispDist = dispersionDist;
-    this.rotOffset = rotOffset;
-    this.vertDrift = vertDrift;
+  var GROUP = { CUBE: 0, STREAM: 1, DRIFT: 2, ACCENT: 3 };
+  var GALAXY_OUTER = 4.8;
+
+  function P(group, ox, oy, oz, size, color, brightness, extra) {
+    this.group = group;
+    this.ox = ox; this.oy = oy; this.oz = oz;
+    this.x = ox; this.y = oy; this.z = oz;
+    this.vx = 0; this.vy = 0; this.vz = 0;
     this.size = size;
-    this.isGreen = isGreen;
-    this.x = ox;
-    this.y = oy;
-    this.z = oz;
-    this.vx = 0;
-    this.vy = 0;
-    this.vz = 0;
-    this.brightness = 0.5 + Math.random() * 0.5;
+    this.color = color; // 0 navy, 1 green, 2 white
+    this.brightness = brightness;
+    this.energy = extra && extra.energy;
+    this.extra = extra || {};
   }
 
-  // --- Generate rounded cube particle field ---
-  function generateParticles(count) {
-    particles = [];
-    var half = 1.0; // cube half-size in model units
-    var cornerRadius = 0.35;
+  // --- 3D helpers ---
+  function project(x, y, z, cx, cy, scale) {
+    var zv = VIEWER_DIST + z;
+    if (zv < 0.1) zv = 0.1;
+    var f = FOV / zv;
+    return { px: cx + x * f * scale, py: cy + y * f * scale, depth: f };
+  }
+  function rotate(x, y, z, cy, sy, cx, sx) {
+    var rx = x * cy - z * sy;
+    var rz = x * sy + z * cy;
+    var ry = y * cx - rz * sx;
+    rz = y * sx + rz * cx;
+    return [rx, ry, rz];
+  }
+  function diskTo3D(r, theta, z, tiltX, tiltY) {
+    var rNorm = r / GALAXY_OUTER;
+    var x = rNorm * Math.cos(theta);
+    var y = rNorm * Math.sin(theta) * 0.46; // ellipse ratio
+    // apply tilt
+    var cx = Math.cos(tiltX), sx = Math.sin(tiltX);
+    var cy = Math.cos(tiltY), sy = Math.sin(tiltY);
+    var y2 = y * cx - z * sx;
+    var z2 = y * sx + z * cx;
+    var x3 = x * cy + z2 * sy;
+    var z3 = -x * sy + z2 * cy;
+    return [x3, y2 * 0.95, z3];
+  }
+
+  // --- Generators ---
+  function generateCube(count, half) {
     var placed = 0;
-    var attempts = 0;
-    var maxAttempts = count * 8;
-
-    while (placed < count && attempts < maxAttempts) {
-      attempts++;
-      // Random point in cube
-      var x = (Math.random() * 2 - 1) * half;
-      var y = (Math.random() * 2 - 1) * half;
-      var z = (Math.random() * 2 - 1) * half;
-
-      // Push towards rounded cube surface
-      var ax = Math.abs(x);
-      var ay = Math.abs(y);
-      var az = Math.abs(z);
-      var maxComp = Math.max(ax, ay, az);
-
-      // If inside the rounded region, push to surface
-      if (maxComp < half - cornerRadius) {
-        // Interior point — push to nearest face
-        if (ax === maxComp) x = (x > 0 ? 1 : -1) * (half - cornerRadius * Math.random());
-        else if (ay === maxComp) y = (y > 0 ? 1 : -1) * (half - cornerRadius * Math.random());
-        else z = (z > 0 ? 1 : -1) * (half - cornerRadius * Math.random());
-      } else {
-        // Round the corners
-        var nx = x / maxComp;
-        var ny = y / maxComp;
-        var nz = z / maxComp;
-        // Blend towards rounded
-        var roundBlend = Math.min(1, (maxComp - (half - cornerRadius)) / cornerRadius);
-        if (roundBlend > 0) {
-          var len = Math.sqrt(nx * nx + ny * ny + nz * nz);
-          if (len > 0) {
-            x = x + (nx / len) * roundBlend * cornerRadius * 0.3;
-            y = y + (ny / len) * roundBlend * cornerRadius * 0.3;
-            z = y + (nz / len) * roundBlend * cornerRadius * 0.3;
-            // Clamp
-            x = Math.max(-half, Math.min(half, x));
-            y = Math.max(-half, Math.min(half, y));
-            z = Math.max(-half, Math.min(half, z));
-          }
-        }
+    var perFace = Math.floor(count * 0.65 / 6);
+    var inner = Math.floor(count * 0.35);
+    var noise = half * 0.18;
+    for (var face = 0; face < 6; face++) {
+      for (var i = 0; i < perFace; i++) {
+        var u = (Math.random() * 2 - 1) * half;
+        var v = (Math.random() * 2 - 1) * half;
+        var w = (Math.random() < 0.5 ? 1 : -1) * half;
+        var x, y, z;
+        if (face < 2) { x = w; y = u; z = v; }
+        else if (face < 4) { x = u; y = w; z = v; }
+        else { x = u; y = v; z = w; }
+        // add noise
+        x += (Math.random() - 0.5) * noise;
+        y += (Math.random() - 0.5) * noise;
+        z += (Math.random() - 0.5) * noise;
+        var color = Math.random() < 0.28 ? 1 : 0;
+        particles.push(new P(GROUP.CUBE, x, y, z, 0.5 + Math.random() * 1.1, color, 0.35 + Math.random() * 0.55));
+        placed++;
       }
-
-      // Dispersion direction (outward from center)
-      var dlen = Math.sqrt(x * x + y * y + z * z);
-      var dx, dy, dz;
-      if (dlen > 0.001) {
-        dx = x / dlen;
-        dy = y / dlen;
-        dz = z / dlen;
-      } else {
-        dx = Math.random() * 2 - 1;
-        dy = Math.random() * 2 - 1;
-        dz = Math.random() * 2 - 1;
-        var dl = Math.sqrt(dx * dx + dy * dy + dz * dz);
-        dx /= dl; dy /= dl; dz /= dl;
-      }
-
-      var dispDist = 0.8 + Math.random() * 1.2;
-      var rotOffset = (Math.random() - 0.5) * 0.6;
-      var vertDrift = (Math.random() - 0.5) * 0.3;
-      var size = 1.2 + Math.random() * 1.8;
-      var isGreen = Math.random() < 0.18; // ~18% green particles
-
-      particles.push(new Particle(x, y, z, [dx, dy, dz], dispDist, rotOffset, vertDrift, size, isGreen));
-      placed++;
+    }
+    for (var j = 0; j < inner; j++) {
+      var u2 = (Math.random() * 2 - 1) * half * 0.75;
+      var v2 = (Math.random() * 2 - 1) * half * 0.75;
+      var w2 = (Math.random() * 2 - 1) * half * 0.75;
+      var color = Math.random() < 0.22 ? 1 : 0;
+      particles.push(new P(GROUP.CUBE, u2, v2, w2, 0.4 + Math.random() * 0.9, color, 0.25 + Math.random() * 0.45));
     }
   }
 
-  // --- 3D projection ---
-  var FOV = 3.5;
-  var viewerDist = 4.5;
+  function generateStream(count) {
+    var arms = 3;
+    var inner = 1.5;
+    var outer = GALAXY_OUTER;
+    var armWidth = 0.32;
+    var thickness = 0.28;
+    var tiltX = -0.22;
+    var tiltY = -0.18;
+    for (var i = 0; i < count; i++) {
+      var arm = i % arms;
+      var u = Math.random();
+      var rBase = inner + (outer - inner) * (u * u); // more at inner
+      var armAngle = (arm / arms) * Math.PI * 2 + (Math.random() * 2 - 1) * armWidth;
+      var theta = armAngle + rBase * 0.85; // spiral twist
+      // density band
+      var band = Math.cos(arms * (theta - rBase * 0.85)) * 0.5 + 0.5;
+      rBase += (Math.random() - 0.5) * 0.25 * (1 - band * 0.4);
+      var r = rBase;
+      var zOff = (Math.random() - 0.5) * thickness;
+      var pt = diskTo3D(r, theta, zOff, tiltX, tiltY);
+      var color = Math.random() < 0.24 ? 1 : 0;
+      if (Math.random() < 0.05) color = 2;
+      var size = 0.7 + Math.random() * 1.2;
+      var brightness = 0.55 + band * 0.5 + Math.random() * 0.25;
+      particles.push(new P(GROUP.STREAM, pt[0], pt[1], pt[2], size, color, brightness, { theta: theta, r: r, z: zOff, tiltX: tiltX, tiltY: tiltY }));
+    }
+  }
 
-  function project(x, y, z, cx, cy, scale) {
-    var zAdjusted = viewerDist + z;
-    if (zAdjusted < 0.1) zAdjusted = 0.1;
-    var f = FOV / zAdjusted;
-    return {
-      px: cx + x * f * scale,
-      py: cy + y * f * scale,
-      depth: f,
-    };
+  function generateDrift(count) {
+    for (var i = 0; i < count; i++) {
+      var u = Math.random();
+      var r = 4.2 + (Math.random() * 2.4) * (1 + u); // outer drift
+      var theta = Math.random() * Math.PI * 2;
+      var zOff = (Math.random() - 0.5) * 0.6;
+      var pt = diskTo3D(r, theta, zOff, -0.22, -0.18);
+      var color = Math.random() < 0.2 ? 1 : 0;
+      var size = 0.5 + Math.random() * 0.9;
+      var brightness = 0.45 + Math.random() * 0.45;
+      particles.push(new P(GROUP.DRIFT, pt[0], pt[1], pt[2], size, color, brightness));
+    }
+  }
+
+  function generateAccents(count) {
+    var tiltX = -0.22, tiltY = -0.18;
+    for (var i = 0; i < count - 1; i++) {
+      var r = 1.8 + Math.random() * 3.2;
+      var theta = Math.random() * Math.PI * 2;
+      var zOff = (Math.random() - 0.5) * 0.35;
+      var pt = diskTo3D(r, theta, zOff, tiltX, tiltY);
+      var color = 2;
+      var size = 1.1 + Math.random() * 2.0;
+      var brightness = 0.85 + Math.random() * 0.15;
+      particles.push(new P(GROUP.ACCENT, pt[0], pt[1], pt[2], size, color, brightness));
+    }
+    // Energy point near lower-right orbit
+    var er = 3.0, etheta = -0.8; // lower-right
+    var ept = diskTo3D(er, etheta, 0, tiltX, tiltY);
+    particles.push(new P(GROUP.ACCENT, ept[0], ept[1], ept[2], 3.2, 2, 0.95, { energy: true }));
+  }
+
+  function generateAll() {
+    particles = [];
+    var c = COUNTS[getDevice()];
+    generateCube(c[0], 0.25);
+    generateStream(c[1]);
+    generateDrift(c[2]);
+    generateAccents(c[3]);
+  }
+
+  function getDevice() {
+    var w = window.innerWidth;
+    if (w < 480) return "mobile";
+    if (w < 768) return "tablet";
+    return "desktop";
   }
 
   // --- Resize ---
   function resize() {
     var rect = canvas.getBoundingClientRect();
-    cssW = rect.width;
-    cssH = rect.height;
+    cssW = rect.width; cssH = rect.height;
     dpr = Math.min(window.devicePixelRatio || 1, DPR_CAP);
     canvas.width = Math.round(cssW * dpr);
     canvas.height = Math.round(cssH * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-    // Cube size relative to canvas
-    cubeSize = Math.min(cssW, cssH) * 0.32;
-
-    // Regenerate particles if count should change
-    var newCount = getParticleCount();
-    if (particles.length !== newCount) {
-      generateParticles(newCount);
-    }
+    scale = Math.min(cssW, cssH) * 0.54;
   }
 
-  function getParticleCount() {
-    var w = window.innerWidth;
-    if (w < 480) return PARTICLE_COUNTS.mobile;
-    if (w < 768) return PARTICLE_COUNTS.tablet;
-    return PARTICLE_COUNTS.desktop;
-  }
-
-  // --- Scroll progress ---
-  function updateScrollProgress() {
+  // --- Scroll ---
+  function updateScroll() {
     var hero = canvas.closest(".hero");
     if (!hero) return;
     var rect = hero.getBoundingClientRect();
     var vh = window.innerHeight;
-    // 0 when hero top is at viewport top, 1 when hero bottom is at viewport top
-    var progress = 1 - (rect.bottom / (vh + rect.height));
-    targetScrollProgress = Math.max(0, Math.min(1, progress));
+    targetScrollProgress = Math.max(0, Math.min(1, 1 - (rect.bottom / (vh + rect.height))));
   }
 
   // --- Pointer ---
@@ -204,14 +211,43 @@
     pointerY = e.clientY - rect.top;
     pointerActive = true;
   }
+  function onPointerLeave() { pointerActive = false; pointerX = -9999; pointerY = -9999; }
 
-  function onPointerLeave() {
-    pointerActive = false;
-    pointerX = -9999;
-    pointerY = -9999;
+  // --- Draw helpers ---
+  function drawGlow(cx, cy, scale) {
+    var r = scale * 2.2;
+    var g = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+    g.addColorStop(0, "rgba(56, 161, 105, 0.10)");
+    g.addColorStop(0.5, "rgba(56, 161, 105, 0.04)");
+    g.addColorStop(1, "rgba(56, 161, 105, 0)");
+    ctx.fillStyle = g; ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.fill();
+
+    var g2 = ctx.createRadialGradient(cx + scale * 0.35, cy + scale * 0.25, 0, cx + scale * 0.35, cy + scale * 0.25, scale * 1.4);
+    g2.addColorStop(0, "rgba(56, 161, 105, 0.07)");
+    g2.addColorStop(1, "rgba(56, 161, 105, 0)");
+    ctx.fillStyle = g2; ctx.beginPath(); ctx.arc(cx + scale * 0.35, cy + scale * 0.25, scale * 1.4, 0, Math.PI * 2); ctx.fill();
+
+    var g3 = ctx.createRadialGradient(cx - scale * 0.25, cy - scale * 0.1, 0, cx - scale * 0.25, cy - scale * 0.1, scale * 1.8);
+    g3.addColorStop(0, "rgba(30, 41, 59, 0.035)");
+    g3.addColorStop(1, "rgba(30, 41, 59, 0)");
+    ctx.fillStyle = g3; ctx.beginPath(); ctx.arc(cx - scale * 0.25, cy - scale * 0.1, scale * 1.8, 0, Math.PI * 2); ctx.fill();
   }
 
-  // --- Animation loop ---
+  function drawParticle(px, py, r, color, opacity) {
+    if (r < 1.1) {
+      ctx.globalAlpha = opacity;
+      ctx.fillRect(px - r, py - r, r * 2, r * 2);
+      ctx.globalAlpha = 1;
+      return;
+    }
+    ctx.globalAlpha = opacity;
+    ctx.beginPath();
+    ctx.arc(px, py, r, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
+
+  // --- Animation ---
   function animate(time) {
     if (!animating) return;
     rafId = requestAnimationFrame(animate);
@@ -219,220 +255,164 @@
     var dt = lastTime ? Math.min(time - lastTime, 33) : 16;
     lastTime = time;
 
-    // Smooth scroll progress
-    scrollProgress += (targetScrollProgress - scrollProgress) * 0.08;
-    // Smooth entrance
-    entranceProgress += (targetEntranceProgress - entranceProgress) * 0.04;
+    scrollProgress += (targetScrollProgress - scrollProgress) * 0.06;
+    entranceProgress += (targetEntranceProgress - entranceProgress) * 0.03;
 
-    // Update rotation
     if (!reduceMotion) {
-      rotY += ROTATION_SPEED * dt;
-      rotX += DRIFT_SPEED * dt * Math.sin(time * 0.00008);
-      breathPhase += BREATH_SPEED * dt;
+      rotY += ROT_GALAXY * dt;
+      rotX += 0.000025 * dt * Math.sin(time * 0.00005);
+      breathPhase += BREATH * dt;
+      galaxyPhase += 0.00004 * dt;
+      cubeRotY += ROT_CUBE * dt;
+      cubeRotX += ROT_CUBE * 0.4 * dt * Math.sin(time * 0.00003);
     }
 
-    // Clear
     ctx.clearRect(0, 0, cssW, cssH);
+    var cx = cssW * 0.56, cy = cssH * 0.48;
+    drawGlow(cx, cy, scale);
 
-    var cx = cssW / 2;
-    var cy = cssH / 2;
-    var scale = cubeSize;
+    var cosY = Math.cos(rotY), sinY = Math.sin(rotY);
+    var cosX = Math.cos(rotX), sinX = Math.sin(rotX);
 
-    // Draw ambient glow
-    drawAmbientGlow(cx, cy, scale);
+    var breath = reduceMotion ? 0 : Math.sin(breathPhase) * 0.02;
+    var dispersion = scrollProgress * MAX_DISPERSION;
+    var entranceDisp = (1 - entranceProgress) * 0.25;
+    var cubeDispStart = Math.max(0, (scrollProgress - 0.6) / 0.4);
 
-    // Precompute rotation matrix for this frame
-    var cosY = Math.cos(rotY);
-    var sinY = Math.sin(rotY);
-    var cosX = Math.cos(rotX);
-    var sinX = Math.sin(rotX);
-
-    // Update and project particles
     var projected = [];
-    var breath = reduceMotion ? 0 : Math.sin(breathPhase) * 0.04;
 
     for (var i = 0; i < particles.length; i++) {
       var p = particles[i];
 
+      // Base position
+      var ox = p.ox, oy = p.oy, oz = p.oz;
+
+      // Galaxy stream motion
+      if (p.group === GROUP.STREAM && p.extra.theta !== undefined) {
+        var newTheta = p.extra.theta + galaxyPhase * (1.0 / p.extra.r);
+        var pt = diskTo3D(p.extra.r, newTheta, p.extra.z, p.extra.tiltX, p.extra.tiltY);
+        ox = pt[0]; oy = pt[1]; oz = pt[2];
+      }
+
+      // Independent cube rotation
+      if (p.group === GROUP.CUBE) {
+        var ccY = Math.cos(cubeRotY), scY = Math.sin(cubeRotY);
+        var ccX = Math.cos(cubeRotX), scX = Math.sin(cubeRotX);
+        var rx = ox * ccY - oz * scY;
+        var rz = ox * scY + oz * ccY;
+        var ry = oy * ccX - rz * scX;
+        rz = oy * scX + rz * ccX;
+        ox = rx; oy = ry; oz = rz;
+      }
+
       // Breathing
-      var bx = p.ox * (1 + breath);
-      var by = p.oy * (1 + breath);
-      var bz = p.oz * (1 + breath);
+      ox *= (1 + breath); oy *= (1 + breath); oz *= (1 + breath);
 
-      // Scroll dispersion
-      var dispersion = scrollProgress * MAX_DISPERSION;
-      var dispX = p.dx * p.dispDist * dispersion;
-      var dispY = p.dy * p.dispDist * dispersion + p.vertDrift * dispersion;
-      var dispZ = p.dz * p.dispDist * dispersion;
+      // Dispersion
+      var dispFactor = dispersion + entranceDisp;
+      if (p.group === GROUP.CUBE) dispFactor = cubeDispStart * 0.5 + entranceDisp;
+      var dx = p.ox * dispFactor * 0.35;
+      var dy = p.oy * dispFactor * 0.35;
+      var dz = p.oz * dispFactor * 0.35;
+      var targetX = ox + dx, targetY = oy + dy, targetZ = oz + dz;
 
-      // Entrance: start slightly dispersed, assemble to 0
-      var entranceDisp = (1 - entranceProgress) * 0.3;
-      dispX += p.dx * p.dispDist * entranceDisp;
-      dispY += p.dy * p.dispDist * entranceDisp;
-      dispZ += p.dz * p.dispDist * entranceDisp;
-
-      // Target position (before rotation)
-      var targetX = bx + dispX;
-      var targetY = by + dispY;
-      var targetZ = bz + dispZ;
-
-      // Spring towards target
+      // Spring
       p.vx += (targetX - p.x) * SPRING;
       p.vy += (targetY - p.y) * SPRING;
       p.vz += (targetZ - p.z) * SPRING;
 
-      // Pointer repulsion (in screen space, applied in model space approximately)
-      if (pointerActive && !reduceMotion) {
-        // Project current position to screen
-        var rx = p.x * cosY - p.z * sinY;
-        var rz = p.x * sinY + p.z * cosY;
-        var ry = p.y * cosX - rz * sinX;
-        rz = p.y * sinX + rz * cosX;
-
-        var proj = project(rx, ry, rz, cx, cy, scale);
-        var dx = proj.px - pointerX;
-        var dy = proj.py - pointerY;
-        var dist = Math.sqrt(dx * dx + dy * dy);
-
+      // Pointer
+      if (pointerActive && !reduceMotion && p.group !== GROUP.CUBE) {
+        var rp = rotate(p.x, p.y, p.z, cosY, sinY, cosX, sinX);
+        var pr = project(rp[0], rp[1], rp[2], cx, cy, scale);
+        var dpx = pr.px - pointerX;
+        var dpy = pr.py - pointerY;
+        var dist = Math.sqrt(dpx * dpx + dpy * dpy);
         if (dist < POINTER_RADIUS && dist > 0.1) {
           var force = (1 - dist / POINTER_RADIUS) * POINTER_FORCE;
-          // Push in model space (approximate)
-          p.vx += (dx / dist) * force * 0.02;
-          p.vy += (dy / dist) * force * 0.02;
+          p.vx += (dpx / dist) * force * 0.015;
+          p.vy += (dpy / dist) * force * 0.015;
         }
       }
 
-      // Damping
-      p.vx *= DAMPING;
-      p.vy *= DAMPING;
-      p.vz *= DAMPING;
+      p.vx *= DAMPING; p.vy *= DAMPING; p.vz *= DAMPING;
+      p.x += p.vx; p.y += p.vy; p.z += p.vz;
 
-      p.x += p.vx;
-      p.y += p.vy;
-      p.z += p.vz;
+      var r2 = rotate(p.x, p.y, p.z, cosY, sinY, cosX, sinX);
+      var pr2 = project(r2[0], r2[1], r2[2], cx, cy, scale);
 
-      // Rotate
-      var rx2 = p.x * cosY - p.z * sinY;
-      var rz2 = p.x * sinY + p.z * cosY;
-      var ry2 = p.y * cosX - rz2 * sinX;
-      rz2 = p.y * sinX + rz2 * cosX;
-
-      // Project
-      var proj2 = project(rx2, ry2, rz2, cx, cy, scale);
       projected.push({
-        px: proj2.px,
-        py: proj2.py,
-        depth: proj2.depth,
-        size: p.size,
-        isGreen: p.isGreen,
-        brightness: p.brightness,
-        z: rz2,
+        px: pr2.px, py: pr2.py, depth: pr2.depth,
+        size: p.size, color: p.color, brightness: p.brightness,
+        z: r2[2], energy: p.energy,
+        group: p.group
       });
     }
 
-    // Sort by depth (back to front)
-    projected.sort(function (a, b) {
-      return a.z - b.z;
-    });
+    projected.sort(function (a, b) { return a.z - b.z; });
 
-    // Draw particles
+    // Draw energy bloom first
     for (var j = 0; j < projected.length; j++) {
-      var pp = projected[j];
-      var opacity = Math.max(0.1, Math.min(1, pp.depth * 0.6)) * pp.brightness;
-      var radius = pp.size * pp.depth;
+      if (projected[j].energy) {
+        var e = projected[j];
+        var g = ctx.createRadialGradient(e.px, e.py, 0, e.px, e.py, e.size * 10 * e.depth);
+        g.addColorStop(0, "rgba(72, 187, 120, 0.35)");
+        g.addColorStop(0.5, "rgba(56, 161, 105, 0.12)");
+        g.addColorStop(1, "rgba(56, 161, 105, 0)");
+        ctx.fillStyle = g;
+        ctx.beginPath(); ctx.arc(e.px, e.py, e.size * 10 * e.depth, 0, Math.PI * 2); ctx.fill();
+      }
+    }
 
-      if (pp.isGreen) {
-        ctx.fillStyle = "rgba(56, 161, 105, " + (opacity * 0.85) + ")";
-      } else {
-        ctx.fillStyle = "rgba(30, 41, 59, " + (opacity * 0.6) + ")";
+    for (var k = 0; k < projected.length; k++) {
+      var pp = projected[k];
+      var op = Math.max(0.12, Math.min(1, pp.depth * 0.85)) * pp.brightness * entranceProgress;
+      var r = pp.size * pp.depth * 2.2;
+      var fadeScroll = 1 - scrollProgress * 0.35 * (pp.group === GROUP.DRIFT ? 1 : 0.5);
+      op *= Math.max(0.4, fadeScroll);
+
+      // White highlights on light bg: tiny dark shadow then bright dot
+      if (pp.color === 2) {
+        ctx.fillStyle = "rgba(30, 41, 59, " + (op * 0.35) + ")";
+        ctx.beginPath(); ctx.arc(pp.px, pp.py, r * 1.5, 0, Math.PI * 2); ctx.fill();
       }
 
-      ctx.beginPath();
-      ctx.arc(pp.px, pp.py, Math.max(0.5, radius), 0, Math.PI * 2);
-      ctx.fill();
+      if (pp.color === 0) { ctx.fillStyle = "rgba(30, 41, 59, " + op + ")"; }
+      else if (pp.color === 1) { ctx.fillStyle = "rgba(56, 161, 105, " + op + ")"; }
+      else { ctx.fillStyle = "rgba(255, 255, 255, " + op + ")"; }
+
+      if (pp.energy) { ctx.fillStyle = "rgba(255, 255, 255, " + (op * 0.95) + ")"; }
+      drawParticle(pp.px, pp.py, r, pp.color, op);
     }
   }
 
-  function drawAmbientGlow(cx, cy, scale) {
-    // Primary green glow
-    var glowRadius = scale * 2.2;
-    var grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, glowRadius);
-    grad.addColorStop(0, "rgba(56, 161, 105, 0.08)");
-    grad.addColorStop(0.5, "rgba(56, 161, 105, 0.03)");
-    grad.addColorStop(1, "rgba(56, 161, 105, 0)");
-    ctx.fillStyle = grad;
-    ctx.beginPath();
-    ctx.arc(cx, cy, glowRadius, 0, Math.PI * 2);
-    ctx.fill();
-
-    // Secondary faint navy glow
-    var glow2Radius = scale * 1.5;
-    var grad2 = ctx.createRadialGradient(cx + scale * 0.3, cy - scale * 0.2, 0, cx + scale * 0.3, cy - scale * 0.2, glow2Radius);
-    grad2.addColorStop(0, "rgba(30, 41, 59, 0.04)");
-    grad2.addColorStop(1, "rgba(30, 41, 59, 0)");
-    ctx.fillStyle = grad2;
-    ctx.beginPath();
-    ctx.arc(cx + scale * 0.3, cy - scale * 0.2, glow2Radius, 0, Math.PI * 2);
-    ctx.fill();
-  }
-
-  // --- IntersectionObserver for pause ---
-  var visibilityObserver = new IntersectionObserver(function (entries) {
+  // --- Init & events ---
+  var visObs = new IntersectionObserver(function (entries) {
     entries.forEach(function (entry) {
       if (entry.isIntersecting) {
-        if (!animating) {
-          animating = true;
-          lastTime = 0;
-          rafId = requestAnimationFrame(animate);
-        }
-      } else {
-        animating = false;
-        if (rafId) cancelAnimationFrame(rafId);
-        rafId = null;
-      }
+        if (!animating) { animating = true; lastTime = 0; rafId = requestAnimationFrame(animate); }
+      } else { animating = false; if (rafId) cancelAnimationFrame(rafId); rafId = null; }
     });
   }, { threshold: 0.01 });
 
-  // --- Resize observer ---
   var resizeTimer = null;
-  function onResize() {
-    if (resizeTimer) clearTimeout(resizeTimer);
-    resizeTimer = setTimeout(resize, 150);
-  }
+  function onResize() { if (resizeTimer) clearTimeout(resizeTimer); resizeTimer = setTimeout(resize, 150); }
 
-  // --- Init ---
   function init() {
     resize();
-    generateParticles(getParticleCount());
-    updateScrollProgress();
-
-    // Entrance: start assembling
+    generateAll();
+    updateScroll();
     targetEntranceProgress = 1;
-
-    // If reduced motion, set everything to final state
-    if (reduceMotion) {
-      entranceProgress = 1;
-      scrollProgress = 0;
-      targetScrollProgress = 0;
-    }
-
-    // Events
+    if (reduceMotion) { entranceProgress = 1; scrollProgress = 0; targetScrollProgress = 0; }
     canvas.addEventListener("pointermove", onPointerMove);
     canvas.addEventListener("pointerleave", onPointerLeave);
     canvas.addEventListener("pointerdown", onPointerMove);
-    window.addEventListener("scroll", updateScrollProgress, { passive: true });
+    window.addEventListener("scroll", updateScroll, { passive: true });
     window.addEventListener("resize", onResize);
-
-    // Start
-    visibilityObserver.observe(canvas.closest(".hero"));
-    animating = true;
-    rafId = requestAnimationFrame(animate);
+    visObs.observe(canvas.closest(".hero"));
+    animating = true; rafId = requestAnimationFrame(animate);
   }
 
-  // Wait for layout
-  if (document.readyState === "complete") {
-    init();
-  } else {
-    window.addEventListener("load", init);
-  }
+  if (document.readyState === "complete") init();
+  else window.addEventListener("load", init);
 })();
