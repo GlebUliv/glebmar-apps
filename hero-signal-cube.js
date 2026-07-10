@@ -9,15 +9,20 @@
   var reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   // --- Config ---
-  var COUNTS = { desktop: [850, 1300, 180, 35], tablet: [480, 850, 130, 28], mobile: [260, 500, 80, 18] };
+  var COUNTS = { desktop: [900, 1300, 180, 35], tablet: [480, 850, 130, 28], mobile: [260, 500, 80, 18] };
   var DPR_CAP = 2;
   var FOV = 4.2;
   var VIEWER_DIST = 5;
   var CUBE_ROT_RATE = 0.000045; // ~140s per revolution
   var CUBE_TILT_RATE = 0.000012;
-  var ARM_SPEEDS = [0.000004, 0.000006, 0.000008]; // rad/ms per arm
-  var DRIFT_SPEED = 0.000008; // rad/ms
-  var ACCENT_SPEED = 0.000005; // rad/ms
+  var STREAM_BASE_ANGULAR_SPEED = 0.0028; // rad/s
+  var STREAM_ARM_MULT = [1.00, 0.92, 1.07];
+  var STREAM_SPEED_VARIATION = 0.12;
+  var DRIFT_ANGULAR_SPEED = 0.0012; // rad/s, ~43% of stream base
+  var ACCENT_ANGULAR_SPEED = 0.0016; // rad/s
+  var ACCENT_PULSE_COUNT = 4;
+  var ACCENT_PULSE_AMP = 0.05;
+  var SEPARATION_REDUCTION = 0.55;
   var POINTER_RADIUS = 130;
   var POINTER_FORCE = 0.09;
   var POINTER_SMOOTH = 0.06;
@@ -80,12 +85,23 @@
 
   // --- Generators ---
   function generateCube(count, half) {
-    var perFace = Math.floor(count * 0.75 / 6);
-    var inner = Math.floor(count * 0.25);
-    var noise = half * 0.14;
-    var edgePow = 0.55;
+    var perFace = Math.floor(count * 0.80 / 6);
+    var inner = Math.floor(count * 0.20);
+    var noise = half * 0.12;
+    var edgePow = 0.45;
     function edgeBias() {
       return (Math.random() < 0.5 ? 1 : -1) * Math.pow(Math.random(), edgePow);
+    }
+    function cubeColor(surface) {
+      var roll = Math.random();
+      if (surface) {
+        if (roll < 0.55) return 0; // navy/slate
+        if (roll < 0.90) return 1; // Guardian Green
+        return 2; // pale highlight
+      }
+      if (roll < 0.60) return 0;
+      if (roll < 0.95) return 1;
+      return 2;
     }
     for (var face = 0; face < 6; face++) {
       for (var i = 0; i < perFace; i++) {
@@ -100,16 +116,16 @@
         x += (Math.random() - 0.5) * noise;
         y += (Math.random() - 0.5) * noise;
         z += (Math.random() - 0.5) * noise;
-        var color = Math.random() < 0.32 ? 1 : 0;
-        particles.push(new P(GROUP.CUBE, x, y, z, 0.7 + Math.random() * 0.95, color, 0.52 + Math.random() * 0.32));
+        var color = cubeColor(true);
+        particles.push(new P(GROUP.CUBE, x, y, z, 0.7 + Math.random() * 0.95, color, 0.55 + Math.random() * 0.35));
       }
     }
     for (var j = 0; j < inner; j++) {
       var u2 = (Math.random() * 2 - 1) * half * 0.75;
       var v2 = (Math.random() * 2 - 1) * half * 0.75;
       var w2 = (Math.random() * 2 - 1) * half * 0.75;
-      var color = Math.random() < 0.25 ? 1 : 0;
-      particles.push(new P(GROUP.CUBE, u2, v2, w2, 0.5 + Math.random() * 0.85, color, 0.42 + Math.random() * 0.32));
+      var color = cubeColor(false);
+      particles.push(new P(GROUP.CUBE, u2, v2, w2, 0.5 + Math.random() * 0.85, color, 0.45 + Math.random() * 0.33));
     }
   }
 
@@ -138,8 +154,13 @@
       if (Math.random() < 0.05) color = 2;
       var size = 0.7 + Math.random() * 1.2;
       var brightness = 0.55 + band * 0.5 + Math.random() * 0.25;
-      var extra = { theta: theta, baseR: r, r: r, z: zOff, tiltX: tiltX, tiltY: tiltY, phase: Math.random() * Math.PI * 2, armSpeed: ARM_SPEEDS[arm] };
-      if (r < 2.2) extra.innerFade = true;
+      var speedVariation = 1 + (Math.random() * 2 - 1) * STREAM_SPEED_VARIATION;
+      var extra = {
+        theta: theta, baseR: r, z: zOff, tiltX: tiltX, tiltY: tiltY,
+        phase: Math.random() * Math.PI * 2, arm: arm,
+        baseAngularSpeed: STREAM_BASE_ANGULAR_SPEED * STREAM_ARM_MULT[arm],
+        speedVariation: speedVariation, innerRadius: inner, outerRadius: outer
+      };
       particles.push(new P(GROUP.STREAM, pt[0], pt[1], pt[2], size, color, brightness, extra));
     }
   }
@@ -155,12 +176,17 @@
       var color = Math.random() < 0.2 ? 1 : 0;
       var size = 0.5 + Math.random() * 0.9;
       var brightness = 0.45 + Math.random() * 0.45;
-      particles.push(new P(GROUP.DRIFT, pt[0], pt[1], pt[2], size, color, brightness, { theta: theta, baseR: r, r: r, z: zOff, tiltX: tiltX, tiltY: tiltY, phase: Math.random() * Math.PI * 2, driftSpeed: DRIFT_SPEED }));
+      var speedVariation = 1 + (Math.random() * 2 - 1) * STREAM_SPEED_VARIATION;
+      particles.push(new P(GROUP.DRIFT, pt[0], pt[1], pt[2], size, color, brightness, { theta: theta, baseR: r, z: zOff, tiltX: tiltX, tiltY: tiltY, phase: Math.random() * Math.PI * 2, baseAngularSpeed: DRIFT_ANGULAR_SPEED, speedVariation: speedVariation }));
     }
   }
 
   function generateAccents(count) {
     var tiltX = -0.22, tiltY = -0.18;
+    var pulseIndices = {};
+    for (var p = 0; p < ACCENT_PULSE_COUNT; p++) {
+      pulseIndices[Math.floor(Math.random() * (count - 1))] = true;
+    }
     for (var i = 0; i < count - 1; i++) {
       var r = 1.8 + Math.random() * 3.2;
       var theta = Math.random() * Math.PI * 2;
@@ -169,7 +195,9 @@
       var color = 2;
       var size = 1.1 + Math.random() * 2.0;
       var brightness = 0.85 + Math.random() * 0.15;
-      particles.push(new P(GROUP.ACCENT, pt[0], pt[1], pt[2], size, color, brightness, { theta: theta, baseR: r, r: r, z: zOff, tiltX: tiltX, tiltY: tiltY, phase: Math.random() * Math.PI * 2, accentSpeed: ACCENT_SPEED }));
+      var speedVariation = 1 + (Math.random() * 2 - 1) * STREAM_SPEED_VARIATION;
+      var extra = { theta: theta, baseR: r, z: zOff, tiltX: tiltX, tiltY: tiltY, phase: Math.random() * Math.PI * 2, baseAngularSpeed: ACCENT_ANGULAR_SPEED, speedVariation: speedVariation, pulse: pulseIndices[i] };
+      particles.push(new P(GROUP.ACCENT, pt[0], pt[1], pt[2], size, color, brightness, extra));
     }
     // Energy point near lower-right orbit
     var er = 3.0, etheta = -0.8; // lower-right
@@ -286,6 +314,12 @@
     var entranceDisp = (1 - entranceProgress) * 0.25;
     var cubeDispStart = Math.max(0, (scrollProgress - 0.6) / 0.4);
 
+    // Separation zone around the projected cube (1.25–1.45 × cube half-diagonal)
+    var cubeHalfDiagonal = 0.30 * Math.sqrt(3);
+    var projectedHalfDiagonal = cubeHalfDiagonal * scale * (FOV / VIEWER_DIST);
+    var zoneInner = 1.25 * projectedHalfDiagonal;
+    var zoneOuter = 1.45 * projectedHalfDiagonal;
+
     var projected = [];
 
     for (var i = 0; i < particles.length; i++) {
@@ -294,32 +328,42 @@
       // Base position
       var ox = p.ox, oy = p.oy, oz = p.oz;
 
-      // Galaxy stream motion: time-based offset from immutable base values
+      // Galaxy stream motion: pure tangential drift from immutable base geometry
       if (p.group === GROUP.STREAM && p.extra.theta !== undefined) {
-        var phase = p.extra.phase || 0;
-        var armSpeed = p.extra.armSpeed || ARM_SPEEDS[0];
-        var angleOffset = timeSeconds * armSpeed + Math.sin(timeSeconds * 0.10 + phase) * 0.006;
-        var theta = p.extra.theta + angleOffset;
+        var theta = p.extra.theta;
+        if (!reduceMotion) {
+          var normalizedRadius = (p.extra.baseR - p.extra.innerRadius) / Math.max(0.001, p.extra.outerRadius - p.extra.innerRadius);
+          var radiusSpeedFactor = 1 - normalizedRadius * 0.35; // inner slightly faster
+          var angularSpeed = p.extra.baseAngularSpeed * radiusSpeedFactor * p.extra.speedVariation;
+          var microDrift = Math.sin(timeSeconds * 0.07 + p.extra.phase) * 0.0035;
+          theta += timeSeconds * angularSpeed + microDrift;
+        }
         var r = p.extra.baseR;
         var pt = diskTo3D(r, theta, p.extra.z, p.extra.tiltX, p.extra.tiltY);
         ox = pt[0]; oy = pt[1]; oz = pt[2];
       }
 
-      // Drift motion
+      // Drift motion: slow tangential angular drift only
       if (p.group === GROUP.DRIFT && p.extra.theta !== undefined) {
-        var phase = p.extra.phase || 0;
-        var angleOffset = timeSeconds * p.extra.driftSpeed + Math.sin(timeSeconds * 0.06 + phase) * 0.006;
-        var theta = p.extra.theta + angleOffset;
+        var theta = p.extra.theta;
+        if (!reduceMotion) {
+          var angularSpeed = p.extra.baseAngularSpeed * p.extra.speedVariation;
+          var microDrift = Math.sin(timeSeconds * 0.06 + p.extra.phase) * 0.003;
+          theta += timeSeconds * angularSpeed + microDrift;
+        }
         var r = p.extra.baseR;
         var pt = diskTo3D(r, theta, p.extra.z, p.extra.tiltX, p.extra.tiltY);
         ox = pt[0]; oy = pt[1]; oz = pt[2];
       }
 
-      // Accent motion (energy point stays fixed)
+      // Accent motion: follow slow tangential stream drift (energy point stays fixed)
       if (p.group === GROUP.ACCENT && p.extra.theta !== undefined && !p.energy) {
-        var phase = p.extra.phase || 0;
-        var angleOffset = timeSeconds * p.extra.accentSpeed + Math.sin(timeSeconds * 0.05 + phase) * 0.005;
-        var theta = p.extra.theta + angleOffset;
+        var theta = p.extra.theta;
+        if (!reduceMotion) {
+          var angularSpeed = p.extra.baseAngularSpeed * p.extra.speedVariation;
+          var microDrift = Math.sin(timeSeconds * 0.05 + p.extra.phase) * 0.0025;
+          theta += timeSeconds * angularSpeed + microDrift;
+        }
         var r = p.extra.baseR;
         var pt = diskTo3D(r, theta, p.extra.z, p.extra.tiltX, p.extra.tiltY);
         ox = pt[0]; oy = pt[1]; oz = pt[2];
@@ -371,12 +415,15 @@
       var r2 = rotate(p.x, p.y, p.z, cosY, sinY, cosX, sinX);
       var pr2 = project(r2[0], r2[1], r2[2], cx, cy, scale);
 
+      var pulseScale = 1;
+      if (!reduceMotion && p.group === GROUP.ACCENT && p.extra.pulse) {
+        pulseScale = 1 + ACCENT_PULSE_AMP * Math.sin(timeSeconds * 0.5 + p.extra.phase);
+      }
       projected.push({
         px: pr2.px, py: pr2.py, depth: pr2.depth,
-        size: p.size, color: p.color, brightness: p.brightness,
+        size: p.size * pulseScale, color: p.color, brightness: p.brightness,
         z: r2[2], energy: p.energy,
-        group: p.group,
-        innerFade: p.extra.innerFade
+        group: p.group
       });
     }
 
@@ -403,10 +450,18 @@
       op *= Math.max(0.4, fadeScroll);
 
       if (pp.group === GROUP.CUBE) {
-        r *= 1.08;
-        op *= 1.14;
+        r *= 1.10;
+        op *= 1.12;
       }
-      if (pp.innerFade) op *= 0.65;
+      if (pp.group === GROUP.STREAM) {
+        var dcx = pp.px - cx;
+        var dcy = pp.py - cy;
+        var dist = Math.sqrt(dcx * dcx + dcy * dcy);
+        if (dist < zoneOuter) {
+          var zoneFade = 1 - Math.max(0, Math.min(1, (dist - zoneInner) / (zoneOuter - zoneInner)));
+          op *= (1 - zoneFade * SEPARATION_REDUCTION);
+        }
+      }
 
       // White highlights on light bg: tiny dark shadow then bright dot
       if (pp.color === 2) {
