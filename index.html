@@ -37,6 +37,7 @@
 </head>
 
 <body>
+  <canvas class="site-canvas" aria-hidden="true"></canvas>
   <a href="#main" class="skip-link">Skip to content</a>
 
   <main id="main">
@@ -59,10 +60,7 @@
               <a class="button button--secondary" href="support.html">Support</a>
             </div>
           </div>
-          <div class="hero__visual">
-            <canvas class="hero__cube-canvas" aria-hidden="true"></canvas>
-            <noscript><div class="hero__cube-fallback" aria-hidden="true"></div></noscript>
-          </div>
+          <div class="hero__visual" aria-hidden="true"></div>
         </div>
       </div>
     </section>
@@ -178,8 +176,8 @@
     </div>
   </footer>
 
-  <!-- Production Renderer V1 (WebGL). Prototype A (Canvas) is preserved as hero-signal-cube.js for reference. -->
-  <script type="module" src="hero-webgl.js"></script>
+  <!-- Site Environment Engine — global WebGL scene (replaces Hero-local renderer) -->
+  <script type="module" src="site-environment.js"></script>
   <script>
     (function () {
       if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;

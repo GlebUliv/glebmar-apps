@@ -1,8 +1,141 @@
-# Renderer Architecture — Core Cube V1 + Field Engine V1
+# Renderer Architecture — Site Environment Engine + Core Cube V1 + Field Engine V1
+
+## Site Environment Engine
+
+### Philosophy
+
+There is no Hero Renderer. There is one continuous Site Environment.
+
+```
+Site
+  ↓
+Environment (WebGL Scene)
+  ↓
+Camera Composition
+```
+
+Hero exists inside the Environment. Never the opposite.
+
+### Architecture
+
+```
+Body
+├── Site Scene (WebGL) — global fixed canvas
+└── Site Content
+        Hero
+        Publisher
+        Principles
+        Products
+        Footer
+```
+
+The renderer is page infrastructure, not a Hero component.
+
+### Canvas
+
+- **Element**: `<canvas class="site-canvas">` — first child of `<body>`
+- **CSS**: `position: fixed; inset: 0; width: 100vw; height: 100vh; pointer-events: none; z-index: 0; background: transparent`
+- **Boundary**: The browser viewport. Never clipped by Hero. Never clipped by sections. Never resized by Hero.
+- **Content layer**: `main` and `.footer` have `position: relative; z-index: 1` to sit above the canvas.
+
+### Scene Ownership
+
+- The renderer owns the scene.
+- The page owns camera states.
+- Hero does not own the renderer.
+
+### Single Instance
+
+- One renderer
+- One Three.js scene
+- One camera
+- One animation loop
+- One resize handler
+
+### Scene States
+
+Each page section maps to a scene state. Each state defines camera position, cube transform, field opacity, dust opacity, and scroll dispersion.
+
+| State | Section | Camera | Cube Position | Cube Scale | Field Opacity | Dust Opacity | Dispersion |
+|-------|---------|--------|---------------|-----------|---------------|-------------|------------|
+| 0 | Hero | (0, 0, 5) → (0, 0, 0) | (0.5, 0, 0) | 1.00 | 1.00 | 1.00 | 0.00 |
+| 1 | Publisher | (0, 0.1, 5) → (0, -0.1, 0) | (0, -0.3, 0.3) | 0.75 | 0.85 | 0.85 | 0.05 |
+| 2 | Principles | (0, 0.2, 5) → (0, -0.2, 0) | (-0.3, -0.5, 0.8) | 0.55 | 0.65 | 0.65 | 0.10 |
+| 3 | Products | (0, 0.3, 5) → (0, -0.3, 0) | (0.4, -0.7, 1.5) | 0.35 | 0.45 | 0.45 | 0.15 |
+| 4 | Footer | (0, 0.4, 5) → (0, -0.4, 0) | (0, -0.9, 2.5) | 0.20 | 0.25 | 0.25 | 0.20 |
+
+States 0 (Hero) and 1 (Publisher) are fully implemented. States 2–4 are placeholders for future choreography.
+
+### State Transition
+
+Scroll does not move objects directly. Scroll changes state progress:
+
+```
+Scroll
+  ↓
+State Progress (0..N-1, fractional)
+  ↓
+Target State
+  ↓
+Smooth Interpolation (exp damping, τ ≈ 280ms)
+```
+
+Every animated value interpolates:
+- Camera position (x, y, z)
+- Camera lookAt target (x, y, z)
+- Cube position (x, y, z)
+- Cube scale
+- Field opacity (all materials)
+- Dust opacity
+- Scroll dispersion
+
+### State Progress Computation
+
+```javascript
+viewCenter = viewportHeight/2 + scrollY
+sectionCenters = [measured center of each section element]
+
+if viewCenter <= sectionCenters[0]: stateProgress = 0
+if viewCenter >= sectionCenters[last]: stateProgress = N-1
+else: linear interpolation between adjacent section centers
+```
+
+### Scene Scale
+
+The Environment extends well beyond the viewport. The browser crops it. Field radius reaches up to 2.805 model units; dust extends to 5.0. The camera at z=5 with 32° FOV shows approximately ±1.6 units horizontally — the field extends far beyond this, creating natural edge cropping.
+
+### Reduced-Motion Behavior
+
+When `prefers-reduced-motion: reduce`:
+- State progress frozen at 0 (Hero state)
+- Cube rotation stops
+- Field flow stops
+- Dust drift stops
+- Static composition preserved
+
+### Future Expansion Strategy
+
+The architecture is prepared for:
+
+- **Lighting Engine**: Add lights to scene — no structural change
+- **Atmospheric Engine**: Add fog/post-processing — no structural change
+- **Interaction Engine**: Pointer events on window, not canvas — already wired
+- **Constellation Formation**: Add new scene state or modify existing — no structural change
+- **Full Choreography**: Tune state parameters — no structural change
+
+### Known Limitations
+
+- States 2–4 are placeholders — cube movement and opacity reduction are linear, not cinematic
+- No IntersectionObserver pause — renderer runs for entire page (acceptable: single scene, GPU-only)
+- Pointer interaction is wired but not visually refined
+- Scroll dispersion is basic — not final choreography
+- No bloom or post-processing
+
+---
 
 ## Scene Role
 
-The Hero scene is a living energy field. Two volumetric particle rivers flow through space, their density modulated by fluid-like noise. The Core Cube is not placed inside the field — it emerges from it through negative space. The visitor first perceives energy; only after a moment does the cube become obvious. This is the opposite of "cube surrounded by rings."
+The Site Environment is a living energy field. Two volumetric particle rivers flow through space, their density modulated by fluid-like noise. The Core Cube is not placed inside the field — it emerges from it through negative space. The visitor first perceives energy; only after a moment does the cube become obvious. This is the opposite of "cube surrounded by rings."
 
 ## Camera
 
@@ -162,7 +295,7 @@ When `prefers-reduced-motion: reduce`:
 
 ## Development Mode
 
-Sprint 03A Orbit Engine V1 has been replaced by Sprint 03B Field Engine V1. The orbit ring mental model is retired. No placeholder systems remain.
+Sprint 03A Orbit Engine V1 has been replaced by Sprint 03B Field Engine V1. Sprint 04 replaced the Hero-local renderer with the Site Environment Engine. The orbit ring mental model is retired. No placeholder systems remain.
 
 ---
 
@@ -434,7 +567,7 @@ Validated at T=0, T=60, T=300 seconds. Field geometry remains stable — only pa
 ## Future Architecture (Reserved)
 
 The following systems are architecturally reserved but not implemented in this sprint:
-- Bloom / post-processing (Sprint 04+)
+- Bloom / post-processing (Sprint 05+)
 - Pointer interaction refinement (Sprint 05+)
-- Scroll choreography (Sprint 05+)
+- Full scroll choreography — cinematic state transitions (Sprint 05+)
 - Signature constellation animation (future)
