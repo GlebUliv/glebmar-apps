@@ -178,7 +178,8 @@
     </div>
   </footer>
 
-  <script src="hero-signal-cube.js" defer></script>
+  <!-- Production Renderer V1 (WebGL). Prototype A (Canvas) is preserved as hero-signal-cube.js for reference. -->
+  <script type="module" src="hero-webgl.js"></script>
   <script>
     (function () {
       if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
