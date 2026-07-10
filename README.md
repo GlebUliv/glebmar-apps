@@ -2,15 +2,14 @@
 
 Official public website for GlebMar Apps.
 
-Current applications:
+Website: https://glebuliv.github.io/glebmar-apps/
 
-- Guardian
+Support: gm.apps.support@gmail.com
 
-Public pages:
+## Governance
 
-- Privacy Policy
-- Support
+This repository follows:
 
-Website:
-
-https://glebuliv.github.io/glebmar-apps/
+- PROJECT.md — Publisher manifest
+- AGENTS.md — Execution rules
+- DESIGN.md — Website design system
