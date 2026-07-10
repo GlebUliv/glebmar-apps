@@ -194,6 +194,74 @@ Cards contain product information, feature summaries, or grouped content.
 
 - Animations must be subtle and functional, not decorative.
 - Prefer CSS transitions for hover states.
-- Avoid auto-playing motion, parallax, or large entrance animations.
 - Honor `prefers-reduced-motion: reduce`.
 - Keep the site lightweight: no JavaScript animation libraries.
+
+---
+
+## Guardian Signal Cube
+
+The Signal Cube is the Hero's interactive visual focal point — a structured particle field forming a rounded cube. It communicates craftsmanship, precision, and calm technology.
+
+### Purpose
+
+- Create a memorable first impression without flashy effects.
+- Provide depth and atmosphere to the Hero section.
+- Reinforce the Guardian brand through restrained green accents.
+
+### Particle Palette
+
+- **Navy/slate particles** (`rgba(30, 41, 59, ~0.6)`): structural depth, ~82% of particles.
+- **Green particles** (`rgba(56, 161, 105, ~0.85)`): signal accents, ~18% of particles.
+- **Ambient glow**: soft radial green halo behind the cube, secondary faint navy glow.
+- No random rainbow colors. No dense connection lines.
+
+### Particle Counts
+
+| Breakpoint | Particle Count |
+|------------|----------------|
+| Desktop (≥768px) | 300 |
+| Tablet (480–767px) | 200 |
+| Mobile (<480px) | 120 |
+
+### Motion Timings
+
+- **Y-axis rotation**: ~55 seconds per revolution (`0.00012 rad/ms`).
+- **X-axis drift**: slower, sinusoidal modulation.
+- **Breathing cycle**: ~10 seconds (`0.0006 rad/ms`), 4% scale amplitude.
+- **Entrance duration**: ~1200ms, particles assemble from slightly dispersed state.
+
+### Pointer Behavior
+
+- Pointer repels particles within a 100px radius.
+- Maximum displacement: ~12–36 CSS pixels.
+- Damped spring return (`SPRING: 0.045`, `DAMPING: 0.92`).
+- No snapping on pointer leave — smooth return.
+
+### Scroll Behavior
+
+- Scroll progress mapped to dispersion (0.0 = assembled, 1.0 = 70% dispersed).
+- Particles follow deterministic outward directions assigned at initialization.
+- Smooth interpolation with damping (`0.08` lerp factor).
+- Fully reversible — scrolling up reassembles the cube.
+
+### Reduced-Motion Behavior
+
+When `prefers-reduced-motion: reduce` is active:
+
+- Idle rotation disabled.
+- Pointer repulsion disabled.
+- Scroll dispersion disabled.
+- Cube rendered in stable assembled state.
+- Visual remains visible and attractive.
+
+### Performance Constraints
+
+- Single `requestAnimationFrame` loop.
+- Paused via `IntersectionObserver` when Hero is off-screen.
+- Device pixel ratio capped at 2.
+- Geometry cached at initialization — no per-frame random generation.
+- Throttled resize handling (150ms debounce).
+- Canvas 2D with simple 3D projection — no WebGL, no dependencies.
+- Canvas marked `aria-hidden="true"` — purely decorative.
+- Progressive enhancement: no-JS fallback renders a static CSS element.

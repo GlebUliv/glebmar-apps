@@ -47,15 +47,21 @@
         <span class="hero__glow hero__glow--3" data-parallax="0.2"></span>
       </div>
       <div class="container container--wide">
-        <div class="hero__inner">
-          <p class="eyebrow hero__eyebrow">GlebMar Apps</p>
-          <h1 class="hero__title">Software<br>people can<br>trust.</h1>
-          <p class="hero__lead">
-            Independent Android applications built with privacy, clarity, and long-term quality in mind.
-          </p>
-          <div class="hero__actions">
-            <a class="button button--primary" href="#guardian">Guardian</a>
-            <a class="button button--secondary" href="support.html">Support</a>
+        <div class="hero__grid">
+          <div class="hero__inner">
+            <p class="eyebrow hero__eyebrow">GlebMar Apps</p>
+            <h1 class="hero__title">Software<br>people can<br>trust.</h1>
+            <p class="hero__lead">
+              Independent Android applications built with privacy, clarity, and long-term quality in mind.
+            </p>
+            <div class="hero__actions">
+              <a class="button button--primary" href="#guardian">Guardian</a>
+              <a class="button button--secondary" href="support.html">Support</a>
+            </div>
+          </div>
+          <div class="hero__visual">
+            <canvas class="hero__cube-canvas" aria-hidden="true"></canvas>
+            <noscript><div class="hero__cube-fallback" aria-hidden="true"></div></noscript>
           </div>
         </div>
       </div>
@@ -172,6 +178,7 @@
     </div>
   </footer>
 
+  <script src="hero-signal-cube.js" defer></script>
   <script>
     (function () {
       if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
