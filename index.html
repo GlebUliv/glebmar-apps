@@ -4,58 +4,217 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
 
-  <title>GlebMar Apps</title>
+  <title>GlebMar Apps — Thoughtfully built Android applications</title>
 
-  <meta
-    name="description"
-    content="Official website of GlebMar Apps, developer of Guardian."
-  >
+  <meta name="description" content="GlebMar Apps is an independent publisher of privacy-conscious Android applications. Guardian is the first product.">
+  <meta name="robots" content="index, follow">
+  <meta name="theme-color" content="#38A169">
+
+  <link rel="canonical" href="https://glebuliv.github.io/glebmar-apps/">
+
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'%3E%3Ccircle cx='50' cy='50' r='50' fill='%2338A169'/%3E%3Ctext x='50' y='68' text-anchor='middle' font-family='Inter, system-ui, sans-serif' font-size='55' font-weight='700' fill='%23ffffff'%3EG%3C/text%3E%3C/svg%3E">
+
+  <meta property="og:title" content="GlebMar Apps — Thoughtfully built Android applications">
+  <meta property="og:description" content="GlebMar Apps is an independent publisher of privacy-conscious Android applications. Guardian is the first product.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://glebuliv.github.io/glebmar-apps/">
+
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="GlebMar Apps">
+  <meta name="twitter:description" content="Thoughtfully built Android applications.">
+
+  <script>
+    if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      document.documentElement.classList.add('js-reveal');
+    }
+    window.addEventListener('load', function () {
+      var hero = document.querySelector('.hero');
+      if (hero) requestAnimationFrame(function () { hero.classList.add('is-loaded'); });
+    });
+  </script>
 
   <link rel="stylesheet" href="styles.css">
 </head>
 
 <body>
-  <main class="container">
-    <header>
-      <p class="brand">GlebMar Apps</p>
+  <a href="#main" class="skip-link">Skip to content</a>
 
-      <h1>Thoughtfully built Android applications.</h1>
-
-      <p class="lead">
-        Simple, privacy-conscious and trustworthy applications designed
-        to help people.
-      </p>
-    </header>
-
-    <section class="card">
-      <h2>Guardian</h2>
-
-      <p>
-        Guardian helps people protect themselves and their loved ones
-        from phone fraud.
-      </p>
-
-      <div class="buttons">
-        <a class="button" href="guardian/privacy-policy.html">
-          Privacy Policy
-        </a>
-
-        <a class="button button-secondary" href="support.html">
-          Support
-        </a>
+  <main id="main">
+    <section class="hero" aria-label="Introduction">
+      <div class="hero__ambient" aria-hidden="true">
+        <span class="hero__glow hero__glow--1" data-parallax="0.3"></span>
+        <span class="hero__glow hero__glow--2" data-parallax="0.5"></span>
+        <span class="hero__glow hero__glow--3" data-parallax="0.2"></span>
+      </div>
+      <div class="container container--wide">
+        <div class="hero__inner">
+          <p class="eyebrow hero__eyebrow">GlebMar Apps</p>
+          <h1 class="hero__title">Software<br>people can<br>trust.</h1>
+          <p class="hero__lead">
+            Independent Android applications built with privacy, clarity, and long-term quality in mind.
+          </p>
+          <div class="hero__actions">
+            <a class="button button--primary" href="#guardian">Guardian</a>
+            <a class="button button--secondary" href="support.html">Support</a>
+          </div>
+        </div>
       </div>
     </section>
 
-    <footer>
-      <p>
-        Support:
-        <a href="mailto:gm.apps.support@gmail.com">
-          gm.apps.support@gmail.com
-        </a>
-      </p>
+    <section class="section publisher" id="publisher" aria-labelledby="publisher-heading">
+      <div class="container">
+        <h2 class="section__title" id="publisher-heading">Publisher</h2>
+        <p class="section__text">
+          GlebMar Apps is an independent publisher of thoughtfully built Android applications. We believe people deserve software that is honest, simple, and respectful.
+        </p>
+      </div>
+    </section>
 
-      <p>© 2026 GlebMar Apps</p>
-    </footer>
+    <section class="section principles" id="principles" aria-labelledby="principles-heading">
+      <div class="container container--wide">
+        <h2 class="section__title" id="principles-heading">Principles</h2>
+        <div class="principles__grid">
+          <article class="principle reveal">
+            <svg class="principle__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"></path>
+              <circle cx="9" cy="7" r="4"></circle>
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87"></path>
+              <path d="M16 3.13a4 4 0 0 1 0 7.75"></path>
+            </svg>
+            <h3 class="principle__title">People before technology</h3>
+            <p class="principle__text">We design for real people, not metrics, dashboards, or trends.</p>
+          </article>
+
+          <article class="principle reveal">
+            <svg class="principle__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"></path>
+              <path d="M9 12l2 2 4-4"></path>
+            </svg>
+            <h3 class="principle__title">Privacy by design</h3>
+            <p class="principle__text">We collect only what is necessary and prefer on-device processing.</p>
+          </article>
+
+          <article class="principle reveal">
+            <svg class="principle__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <circle cx="12" cy="12" r="5"></circle>
+              <line x1="12" y1="1" x2="12" y2="3"></line>
+              <line x1="12" y1="21" x2="12" y2="23"></line>
+              <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+              <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+              <line x1="1" y1="12" x2="3" y2="12"></line>
+              <line x1="21" y1="12" x2="23" y2="12"></line>
+              <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+              <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+            </svg>
+            <h3 class="principle__title">Clarity over complexity</h3>
+            <p class="principle__text">Every feature and word earns its place by being useful and clear.</p>
+          </article>
+
+          <article class="principle reveal">
+            <svg class="principle__icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <polygon points="12 2 2 7 12 12 22 7 12 2"></polygon>
+              <polyline points="2 17 12 22 22 17"></polyline>
+              <polyline points="2 12 12 17 22 12"></polyline>
+            </svg>
+            <h3 class="principle__title">Built to last</h3>
+            <p class="principle__text">We build calm, maintainable software that works well for years.</p>
+          </article>
+        </div>
+      </div>
+    </section>
+
+    <section class="section guardian" id="guardian" aria-labelledby="guardian-heading">
+      <div class="container">
+        <div class="guardian__card reveal">
+          <div class="guardian__brand">
+            <svg class="guardian__logo" viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M24 4L6 12v10c0 12 8 21 18 24 10-3 18-12 18-24V12L24 4z"></path>
+              <path d="M16 24l6 6 10-12"></path>
+            </svg>
+            <span class="guardian__name">Guardian</span>
+          </div>
+          <span class="guardian__status">Preparing for Google Play</span>
+          <h2 class="guardian__title" id="guardian-heading">Protection from phone fraud</h2>
+          <p class="guardian__text">
+            Guardian helps people recognize and avoid suspicious phone calls. It works locally on the device, without accounts, analytics, or cloud processing.
+          </p>
+          <div class="guardian__actions">
+            <a class="button button--primary" href="guardian/privacy-policy.html">Privacy Policy</a>
+            <a class="button button--secondary" href="support.html">Support</a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section support" id="support" aria-labelledby="support-heading">
+      <div class="container">
+        <h2 class="section__title" id="support-heading">Support</h2>
+        <p class="section__text">Need help with Guardian or GlebMar Apps?</p>
+        <a class="support__email" href="mailto:gm.apps.support@gmail.com">gm.apps.support@gmail.com</a>
+        <p class="support__response">We normally reply within <strong>2–3 business days</strong>.</p>
+      </div>
+    </section>
   </main>
+
+  <footer class="footer">
+    <div class="container container--wide">
+      <div class="footer__content">
+        <p class="footer__brand">GlebMar Apps</p>
+        <nav class="footer__nav" aria-label="Footer">
+          <a href="#publisher">Publisher</a>
+          <a href="#guardian">Guardian</a>
+          <a href="guardian/privacy-policy.html">Privacy</a>
+          <a href="support.html">Support</a>
+          <a href="https://github.com/GlebUliv/glebmar-apps" target="_blank" rel="noopener noreferrer" aria-label="GlebMar Apps on GitHub">GitHub</a>
+        </nav>
+        <p class="footer__copyright">© 2026 GlebMar Apps</p>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    (function () {
+      if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+
+      const observer = new IntersectionObserver(function (entries) {
+        entries.forEach(function (entry) {
+          if (entry.isIntersecting) {
+            entry.target.classList.add('reveal--visible');
+            observer.unobserve(entry.target);
+          }
+        });
+      }, { threshold: 0.1 });
+
+      document.querySelectorAll('.reveal').forEach(function (el) {
+        observer.observe(el);
+      });
+
+      var hero = document.querySelector('.hero');
+      if (hero) {
+        var glows = hero.querySelectorAll('[data-parallax]');
+        var raf = null;
+
+        hero.addEventListener('mousemove', function (e) {
+          if (raf) return;
+          raf = requestAnimationFrame(function () {
+            raf = null;
+            var rect = hero.getBoundingClientRect();
+            var mx = (e.clientX - rect.left) / rect.width - 0.5;
+            var my = (e.clientY - rect.top) / rect.height - 0.5;
+            glows.forEach(function (g) {
+              var depth = parseFloat(g.dataset.parallax) * 20;
+              g.style.transform = 'translate(' + (mx * depth) + 'px, ' + (my * depth) + 'px)';
+            });
+          });
+        });
+
+        hero.addEventListener('mouseleave', function () {
+          glows.forEach(function (g) {
+            g.style.transform = '';
+          });
+        });
+      }
+    })();
+  </script>
 </body>
 </html>
