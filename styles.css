@@ -62,44 +62,6 @@ footer {
   font-size: 0.95rem;
 }
 
-.buttons {
-
-display:flex;
-
-gap:16px;
-
-margin-top:24px;
-
-flex-wrap:wrap;
-
-}
-
-.button {
-
-display:inline-block;
-
-padding:12px 22px;
-
-border-radius:12px;
-
-background:#2f855a;
-
-color:white;
-
-text-decoration:none;
-
-font-weight:600;
-
-transition:.2s;
-
-}
-
-.button:hover{
-
-opacity:.9;
-
-}
-
 table{
 
 width:100%;
@@ -136,4 +98,31 @@ border:none;
 
 border-top:1px solid #e2e8f0;
 
+}
+
+.buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 24px;
+}
+
+.button {
+  display: inline-block;
+  padding: 12px 20px;
+  border-radius: 12px;
+  background: #2f855a;
+  color: #ffffff;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.button:hover {
+  opacity: 0.9;
+}
+
+.button-secondary {
+  border: 1px solid #cbd5e1;
+  background: #ffffff;
+  color: #1e293b;
 }
