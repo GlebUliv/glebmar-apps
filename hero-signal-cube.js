@@ -9,15 +9,19 @@
   var reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
 
   // --- Config ---
-  var COUNTS = { desktop: [720, 1300, 180, 50], tablet: [480, 850, 130, 40], mobile: [260, 500, 80, 24] };
+  var COUNTS = { desktop: [720, 1300, 180, 35], tablet: [480, 850, 130, 28], mobile: [260, 500, 80, 18] };
   var DPR_CAP = 2;
   var FOV = 4.2;
   var VIEWER_DIST = 5;
-  var ROT_GALAXY = 0.00007; // ~75s
-  var ROT_CUBE = 0.00005; // ~105s
-  var BREATH = 0.00035; // ~15s
+  var BREATH = 0.00035; // ~18s cycle
+  var CUBE_ROT_RATE = 0.000045; // ~140s per revolution
+  var CUBE_TILT_RATE = 0.000012;
+  var ARM_SPEEDS = [0.000004, 0.000006, 0.000008]; // rad/ms per arm
+  var DRIFT_SPEED = 0.000008; // rad/ms
+  var ACCENT_SPEED = 0.000005; // rad/ms
   var POINTER_RADIUS = 130;
-  var POINTER_FORCE = 0.07;
+  var POINTER_FORCE = 0.09;
+  var POINTER_SMOOTH = 0.06;
   var SPRING = 0.032;
   var DAMPING = 0.94;
   var MAX_DISPERSION = 0.85;
@@ -25,11 +29,13 @@
   // --- State ---
   var particles = [];
   var dpr = 1, cssW = 0, cssH = 0, scale = 0;
-  var pointerX = -9999, pointerY = -9999, pointerActive = false;
+  var pointerTargetX = -9999, pointerTargetY = -9999;
+  var pointerSmoothX = -9999, pointerSmoothY = -9999;
+  var pointerActive = false;
   var scrollProgress = 0, targetScrollProgress = 0;
   var animating = false, rafId = null, lastTime = 0;
   var entranceProgress = 0, targetEntranceProgress = 0;
-  var rotY = 0, rotX = 0, breathPhase = 0, galaxyPhase = 0, cubeRotY = 0, cubeRotX = 0;
+  var breathPhase = 0;
 
   var GROUP = { CUBE: 0, STREAM: 1, DRIFT: 2, ACCENT: 3 };
   var GALAXY_OUTER = 4.8;
@@ -76,7 +82,6 @@
 
   // --- Generators ---
   function generateCube(count, half) {
-    var placed = 0;
     var perFace = Math.floor(count * 0.65 / 6);
     var inner = Math.floor(count * 0.35);
     var noise = half * 0.18;
@@ -93,25 +98,25 @@
         x += (Math.random() - 0.5) * noise;
         y += (Math.random() - 0.5) * noise;
         z += (Math.random() - 0.5) * noise;
-        var color = Math.random() < 0.28 ? 1 : 0;
-        particles.push(new P(GROUP.CUBE, x, y, z, 0.5 + Math.random() * 1.1, color, 0.35 + Math.random() * 0.55));
-        placed++;
+        var color = Math.random() < 0.32 ? 1 : 0;
+        particles.push(new P(GROUP.CUBE, x, y, z, 0.6 + Math.random() * 0.9, color, 0.45 + Math.random() * 0.35));
       }
     }
     for (var j = 0; j < inner; j++) {
       var u2 = (Math.random() * 2 - 1) * half * 0.75;
       var v2 = (Math.random() * 2 - 1) * half * 0.75;
       var w2 = (Math.random() * 2 - 1) * half * 0.75;
-      var color = Math.random() < 0.22 ? 1 : 0;
-      particles.push(new P(GROUP.CUBE, u2, v2, w2, 0.4 + Math.random() * 0.9, color, 0.25 + Math.random() * 0.45));
+      var color = Math.random() < 0.25 ? 1 : 0;
+      particles.push(new P(GROUP.CUBE, u2, v2, w2, 0.45 + Math.random() * 0.75, color, 0.35 + Math.random() * 0.35));
     }
   }
 
   function generateStream(count) {
     var arms = 3;
-    var inner = 1.5;
+    var inner = 1.8;
     var outer = GALAXY_OUTER;
-    var armWidth = 0.32;
+    var armWidths = [0.34, 0.30, 0.26];
+    var armTwists = [0.80, 0.85, 0.90];
     var thickness = 0.28;
     var tiltX = -0.22;
     var tiltY = -0.18;
@@ -119,11 +124,11 @@
       var arm = i % arms;
       var u = Math.random();
       var rBase = inner + (outer - inner) * (u * u); // more at inner
-      var armAngle = (arm / arms) * Math.PI * 2 + (Math.random() * 2 - 1) * armWidth;
-      var theta = armAngle + rBase * 0.85; // spiral twist
+      var armAngle = (arm / arms) * Math.PI * 2 + (Math.random() * 2 - 1) * armWidths[arm];
+      var theta = armAngle + rBase * armTwists[arm];
       // density band
-      var band = Math.cos(arms * (theta - rBase * 0.85)) * 0.5 + 0.5;
-      rBase += (Math.random() - 0.5) * 0.25 * (1 - band * 0.4);
+      var band = Math.cos(arms * (theta - rBase * armTwists[arm])) * 0.5 + 0.5;
+      rBase += (Math.random() - 0.5) * 0.22 * (1 - band * 0.4);
       var r = rBase;
       var zOff = (Math.random() - 0.5) * thickness;
       var pt = diskTo3D(r, theta, zOff, tiltX, tiltY);
@@ -131,21 +136,22 @@
       if (Math.random() < 0.05) color = 2;
       var size = 0.7 + Math.random() * 1.2;
       var brightness = 0.55 + band * 0.5 + Math.random() * 0.25;
-      particles.push(new P(GROUP.STREAM, pt[0], pt[1], pt[2], size, color, brightness, { theta: theta, r: r, z: zOff, tiltX: tiltX, tiltY: tiltY }));
+      particles.push(new P(GROUP.STREAM, pt[0], pt[1], pt[2], size, color, brightness, { theta: theta, baseR: r, r: r, z: zOff, tiltX: tiltX, tiltY: tiltY, phase: Math.random() * Math.PI * 2, armSpeed: ARM_SPEEDS[arm] }));
     }
   }
 
   function generateDrift(count) {
+    var tiltX = -0.22, tiltY = -0.18;
     for (var i = 0; i < count; i++) {
       var u = Math.random();
       var r = 4.2 + (Math.random() * 2.4) * (1 + u); // outer drift
       var theta = Math.random() * Math.PI * 2;
       var zOff = (Math.random() - 0.5) * 0.6;
-      var pt = diskTo3D(r, theta, zOff, -0.22, -0.18);
+      var pt = diskTo3D(r, theta, zOff, tiltX, tiltY);
       var color = Math.random() < 0.2 ? 1 : 0;
       var size = 0.5 + Math.random() * 0.9;
       var brightness = 0.45 + Math.random() * 0.45;
-      particles.push(new P(GROUP.DRIFT, pt[0], pt[1], pt[2], size, color, brightness));
+      particles.push(new P(GROUP.DRIFT, pt[0], pt[1], pt[2], size, color, brightness, { theta: theta, baseR: r, r: r, z: zOff, tiltX: tiltX, tiltY: tiltY, phase: Math.random() * Math.PI * 2, driftSpeed: DRIFT_SPEED }));
     }
   }
 
@@ -159,7 +165,7 @@
       var color = 2;
       var size = 1.1 + Math.random() * 2.0;
       var brightness = 0.85 + Math.random() * 0.15;
-      particles.push(new P(GROUP.ACCENT, pt[0], pt[1], pt[2], size, color, brightness));
+      particles.push(new P(GROUP.ACCENT, pt[0], pt[1], pt[2], size, color, brightness, { theta: theta, baseR: r, r: r, z: zOff, tiltX: tiltX, tiltY: tiltY, phase: Math.random() * Math.PI * 2, accentSpeed: ACCENT_SPEED }));
     }
     // Energy point near lower-right orbit
     var er = 3.0, etheta = -0.8; // lower-right
@@ -170,7 +176,7 @@
   function generateAll() {
     particles = [];
     var c = COUNTS[getDevice()];
-    generateCube(c[0], 0.25);
+    generateCube(c[0], 0.30);
     generateStream(c[1]);
     generateDrift(c[2]);
     generateAccents(c[3]);
@@ -207,11 +213,16 @@
   function onPointerMove(e) {
     if (reduceMotion) return;
     var rect = canvas.getBoundingClientRect();
-    pointerX = e.clientX - rect.left;
-    pointerY = e.clientY - rect.top;
+    pointerTargetX = e.clientX - rect.left;
+    pointerTargetY = e.clientY - rect.top;
+    if (!pointerActive) { pointerSmoothX = pointerTargetX; pointerSmoothY = pointerTargetY; }
     pointerActive = true;
   }
-  function onPointerLeave() { pointerActive = false; pointerX = -9999; pointerY = -9999; }
+  function onPointerLeave() {
+    pointerActive = false;
+    pointerTargetX = pointerSmoothX;
+    pointerTargetY = pointerSmoothY;
+  }
 
   // --- Draw helpers ---
   function drawGlow(cx, cy, scale) {
@@ -255,24 +266,28 @@
     var dt = lastTime ? Math.min(time - lastTime, 33) : 16;
     lastTime = time;
 
-    scrollProgress += (targetScrollProgress - scrollProgress) * 0.06;
-    entranceProgress += (targetEntranceProgress - entranceProgress) * 0.03;
+    var dtSeconds = dt * 0.001;
+    var scrollK = 1 - Math.exp(-3.6 * dtSeconds);
+    var entranceK = 1 - Math.exp(-1.8 * dtSeconds);
+    var springK = 1 - Math.exp(-SPRING * 60 * dtSeconds);
+    var damping = Math.exp(-(1 - DAMPING) * 60 * dtSeconds);
+
+    scrollProgress += (targetScrollProgress - scrollProgress) * scrollK;
+    entranceProgress += (targetEntranceProgress - entranceProgress) * entranceK;
 
     if (!reduceMotion) {
-      rotY += ROT_GALAXY * dt;
-      rotX += 0.000025 * dt * Math.sin(time * 0.00005);
-      breathPhase += BREATH * dt;
-      galaxyPhase += 0.00004 * dt;
-      cubeRotY += ROT_CUBE * dt;
-      cubeRotX += ROT_CUBE * 0.4 * dt * Math.sin(time * 0.00003);
+      breathPhase = time * BREATH;
+      pointerSmoothX += (pointerTargetX - pointerSmoothX) * POINTER_SMOOTH;
+      pointerSmoothY += (pointerTargetY - pointerSmoothY) * POINTER_SMOOTH;
     }
 
     ctx.clearRect(0, 0, cssW, cssH);
     var cx = cssW * 0.56, cy = cssH * 0.48;
     drawGlow(cx, cy, scale);
 
-    var cosY = Math.cos(rotY), sinY = Math.sin(rotY);
-    var cosX = Math.cos(rotX), sinX = Math.sin(rotX);
+    // No global galaxy rotation; orientation is fixed by diskTo3D tilt.
+    var cosY = 1, sinY = 0, cosX = 1, sinX = 0;
+    var timeSeconds = time * 0.001;
 
     var breath = reduceMotion ? 0 : Math.sin(breathPhase) * 0.02;
     var dispersion = scrollProgress * MAX_DISPERSION;
@@ -287,15 +302,44 @@
       // Base position
       var ox = p.ox, oy = p.oy, oz = p.oz;
 
-      // Galaxy stream motion
+      // Galaxy stream motion: time-based offset from immutable base values
       if (p.group === GROUP.STREAM && p.extra.theta !== undefined) {
-        var newTheta = p.extra.theta + galaxyPhase * (1.0 / p.extra.r);
-        var pt = diskTo3D(p.extra.r, newTheta, p.extra.z, p.extra.tiltX, p.extra.tiltY);
+        var phase = p.extra.phase || 0;
+        var armSpeed = p.extra.armSpeed || ARM_SPEEDS[0];
+        var angleOffset = timeSeconds * armSpeed + Math.sin(timeSeconds * 0.12 + phase) * 0.012;
+        var radiusOffset = Math.sin(timeSeconds * 0.09 + phase) * 0.006;
+        var theta = p.extra.theta + angleOffset;
+        var r = Math.max(0.1, p.extra.baseR + radiusOffset);
+        var pt = diskTo3D(r, theta, p.extra.z, p.extra.tiltX, p.extra.tiltY);
         ox = pt[0]; oy = pt[1]; oz = pt[2];
       }
 
-      // Independent cube rotation
+      // Drift motion
+      if (p.group === GROUP.DRIFT && p.extra.theta !== undefined) {
+        var phase = p.extra.phase || 0;
+        var angleOffset = timeSeconds * p.extra.driftSpeed + Math.sin(timeSeconds * 0.08 + phase) * 0.015;
+        var radiusOffset = Math.sin(timeSeconds * 0.05 + phase) * 0.015;
+        var theta = p.extra.theta + angleOffset;
+        var r = Math.max(2.0, p.extra.baseR + radiusOffset);
+        var pt = diskTo3D(r, theta, p.extra.z, p.extra.tiltX, p.extra.tiltY);
+        ox = pt[0]; oy = pt[1]; oz = pt[2];
+      }
+
+      // Accent motion (energy point stays fixed)
+      if (p.group === GROUP.ACCENT && p.extra.theta !== undefined && !p.energy) {
+        var phase = p.extra.phase || 0;
+        var angleOffset = timeSeconds * p.extra.accentSpeed + Math.sin(timeSeconds * 0.06 + phase) * 0.01;
+        var radiusOffset = Math.sin(timeSeconds * 0.04 + phase) * 0.008;
+        var theta = p.extra.theta + angleOffset;
+        var r = Math.max(1.0, p.extra.baseR + radiusOffset);
+        var pt = diskTo3D(r, theta, p.extra.z, p.extra.tiltX, p.extra.tiltY);
+        ox = pt[0]; oy = pt[1]; oz = pt[2];
+      }
+
+      // Independent cube rotation (time-based, very slow)
       if (p.group === GROUP.CUBE) {
+        var cubeRotY = reduceMotion ? 0 : time * CUBE_ROT_RATE;
+        var cubeRotX = reduceMotion ? 0 : time * CUBE_TILT_RATE;
         var ccY = Math.cos(cubeRotY), scY = Math.sin(cubeRotY);
         var ccX = Math.cos(cubeRotX), scX = Math.sin(cubeRotX);
         var rx = ox * ccY - oz * scY;
@@ -317,25 +361,25 @@
       var targetX = ox + dx, targetY = oy + dy, targetZ = oz + dz;
 
       // Spring
-      p.vx += (targetX - p.x) * SPRING;
-      p.vy += (targetY - p.y) * SPRING;
-      p.vz += (targetZ - p.z) * SPRING;
+      p.vx += (targetX - p.x) * springK;
+      p.vy += (targetY - p.y) * springK;
+      p.vz += (targetZ - p.z) * springK;
 
-      // Pointer
+      // Pointer — smooth, local, non-wave influence
       if (pointerActive && !reduceMotion && p.group !== GROUP.CUBE) {
         var rp = rotate(p.x, p.y, p.z, cosY, sinY, cosX, sinX);
         var pr = project(rp[0], rp[1], rp[2], cx, cy, scale);
-        var dpx = pr.px - pointerX;
-        var dpy = pr.py - pointerY;
+        var dpx = pr.px - pointerSmoothX;
+        var dpy = pr.py - pointerSmoothY;
         var dist = Math.sqrt(dpx * dpx + dpy * dpy);
         if (dist < POINTER_RADIUS && dist > 0.1) {
           var force = (1 - dist / POINTER_RADIUS) * POINTER_FORCE;
-          p.vx += (dpx / dist) * force * 0.015;
-          p.vy += (dpy / dist) * force * 0.015;
+          p.vx += (dpx / dist) * force * 0.012;
+          p.vy += (dpy / dist) * force * 0.012;
         }
       }
 
-      p.vx *= DAMPING; p.vy *= DAMPING; p.vz *= DAMPING;
+      p.vx *= damping; p.vy *= damping; p.vz *= damping;
       p.x += p.vx; p.y += p.vy; p.z += p.vz;
 
       var r2 = rotate(p.x, p.y, p.z, cosY, sinY, cosX, sinX);
