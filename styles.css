@@ -61,3 +61,79 @@ footer {
   color: #64748b;
   font-size: 0.95rem;
 }
+
+.buttons {
+
+display:flex;
+
+gap:16px;
+
+margin-top:24px;
+
+flex-wrap:wrap;
+
+}
+
+.button {
+
+display:inline-block;
+
+padding:12px 22px;
+
+border-radius:12px;
+
+background:#2f855a;
+
+color:white;
+
+text-decoration:none;
+
+font-weight:600;
+
+transition:.2s;
+
+}
+
+.button:hover{
+
+opacity:.9;
+
+}
+
+table{
+
+width:100%;
+
+border-collapse:collapse;
+
+margin:24px 0;
+
+}
+
+table th{
+
+text-align:left;
+
+padding:12px;
+
+background:#eef5f0;
+
+}
+
+table td{
+
+padding:12px;
+
+border-top:1px solid #dbe4de;
+
+}
+
+hr{
+
+margin:40px 0;
+
+border:none;
+
+border-top:1px solid #e2e8f0;
+
+}
