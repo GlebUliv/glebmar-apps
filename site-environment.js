@@ -1185,23 +1185,21 @@ var FLOW_C = {
     "  float widthFactor = 1.0 - abs(aWidthOffset) / uHalfWidth;",
     "  widthFactor = smoothstep(0.0, 0.4, widthFactor);",
     // Cube emergence — gradual density reduction near center (negative space)
+    // Widened range for smooth continuity — ribbon flows through cube, not split at it
     "  float distToCenter = length(mvPosition.xy);",
-    "  float clarityFactor = smoothstep(0.40, 1.1, distToCenter);",
+    "  float clarityFactor = smoothstep(0.25, 1.3, distToCenter);",
     "  float frontWeight = smoothstep(-0.15, 0.35, zDiff);",
     // Material response — separate diffuse and emission
     "  float matDiffuse, matEmission, matSize, matSat, matSoft;",
     "  materialResponse(aMaterialId, aBrightness, widthFactor, matDiffuse, matEmission, matSize, matSat, matSoft);",
     "  vColor = aColorMix;",
     "  vMaterialId = aMaterialId;",
-    "  float clarityMod = mix(1.0, mix(0.20, 1.0, clarityFactor), frontWeight);",
-    // Composition focus: cube is the focal point.
-    // Embrace zone — energy halo at medium distance from cube.
-    // Near cube: clarityMod keeps particles dim (cube shines).
-    // Medium distance: embraceBoost peaks (energy embraces cube).
-    // Far: embraceBoost fades (atmosphere supports, doesn't compete).
-    "  float cubeProximity = 1.0 - clarityFactor;",
-    "  float embraceBoost = smoothstep(0.0, 0.35, cubeProximity) * (1.0 - smoothstep(0.65, 1.0, cubeProximity));",
-    "  float focusWeight = mix(0.82, 1.18, embraceBoost);",
+    // Connectivity: raised floor so ribbon visually continues through cube area.
+    // Cube is still focal (dimmer near center) but no dark gap that splits the ribbon.
+    "  float clarityMod = mix(1.0, mix(0.55, 1.0, clarityFactor), frontWeight);",
+    // Smooth monotonic gradient — brighter near cube, calmer far away.
+    // No ring or peak that would separate cube from ribbon.
+    "  float focusWeight = mix(1.10, 0.85, clarityFactor);",
     // Vein brightness redistribution — veins brighter, surrounding calmer, no total increase
     "  float veinBoost = mix(0.82, 1.18, aVeinFactor);",
     "  vDiffuse = matDiffuse * densityMod * widthFactor * clarityMod * veinBoost * focusWeight;",
@@ -1212,8 +1210,8 @@ var FLOW_C = {
     // Depth attenuation
     "  float depth = -mvPosition.z;",
     "  float depthFactor = smoothstep(3.0, 7.5, depth);",
-    // Size emphasis — embrace zone particles slightly larger, atmosphere smaller
-    "  float sizeFocus = mix(0.88, 1.15, embraceBoost);",
+    // Size continuity — slightly larger near cube, smaller far away (monotonic, no ring)
+    "  float sizeFocus = mix(1.08, 0.90, clarityFactor);",
     "  gl_PointSize = max(1.0, aSize * uPointScale * matSize * sizeFocus * (1.0 - depthFactor * 0.25) / depth);", 
     "  gl_Position = projectionMatrix * mvPosition;",
     "}"
