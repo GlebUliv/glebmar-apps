@@ -1659,6 +1659,249 @@ import * as THREE from './vendor/three.module.min.js';
     materialOpacityRefs.push({ uniform: mat.uniforms.uOpacity, base: opacity, isDust: true });
   }
 
+  // ─── Optical Pipeline: HDR + Selective Bloom ──────────────
+  // Scene → HDR RT → Bright Extract → Gaussian Blur (multi-pass)
+  // → Composite (Bloom + ACES Tone Map) → Screen
+  //
+  // Bloom uses ONLY emissive contribution (threshold isolates HDR emission).
+  // Diffuse lighting does not bloom. Dust never blooms.
+
+  var post = {};
+  var BLOOM_THRESHOLD = 0.72;
+  var BLOOM_RADIUS = 0.008;
+  var BLOOM_INTENSITY = 0.38;
+  var BLOOM_PASSES = 4;
+
+  var brightExtractShader = [
+    "uniform sampler2D tDiffuse;",
+    "uniform float uThreshold;",
+    "varying vec2 vUv;",
+    "void main() {",
+    "  vec3 c = texture2D(tDiffuse, vUv).rgb;",
+    "  float l = max(c.r, max(c.g, c.b));",
+    "  float contrib = smoothstep(uThreshold, uThreshold + 0.15, l);",
+    "  gl_FragColor = vec4(c * contrib, 1.0);",
+    "}"
+  ].join("\n");
+
+  var blurShader = [
+    "uniform sampler2D tDiffuse;",
+    "uniform vec2 uDirection;",
+    "uniform float uRadius;",
+    "varying vec2 vUv;",
+    // 9-tap Gaussian — soft, no hard halos
+    "float gaussian[5];",
+    "void main() {",
+    "  gaussian[0] = 0.227027;",
+    "  gaussian[1] = 0.1945946;",
+    "  gaussian[2] = 0.1216216;",
+    "  gaussian[3] = 0.054054;",
+    "  gaussian[4] = 0.016216;",
+    "  vec3 sum = texture2D(tDiffuse, vUv).rgb * gaussian[0];",
+    "  for (int i = 1; i < 5; i++) {",
+    "    vec2 offset = uDirection * uRadius * float(i);",
+    "    sum += texture2D(tDiffuse, vUv + offset).rgb * gaussian[i];",
+    "    sum += texture2D(tDiffuse, vUv - offset).rgb * gaussian[i];",
+    "  }",
+    "  gl_FragColor = vec4(sum, 1.0);",
+    "}"
+  ].join("\n");
+
+  var compositeShader = [
+    "uniform sampler2D tScene;",
+    "uniform sampler2D tBloom;",
+    "uniform float uBloomIntensity;",
+    "varying vec2 vUv;",
+    // ACES filmic tone mapping — preserves white background, no gray wash
+    "vec3 acesTonemap(vec3 c) {",
+    "  float a = 2.51; float b = 0.03; float m = 2.43;",
+    "  float d = 0.59; float e = 0.14;",
+    "  return clamp((c * (a * c + b)) / (c * (m * c + d) + e), 0.0, 1.0);",
+    "}",
+    "void main() {",
+    "  vec4 sceneSample = texture2D(tScene, vUv);",
+    "  vec3 bloomColor = texture2D(tBloom, vUv).rgb;",
+    "  vec3 linear = sceneSample.rgb + bloomColor * uBloomIntensity;",
+    "  vec3 tonemapped = acesTonemap(linear);",
+    // Preserve scene alpha so transparent canvas shows page background
+    "  gl_FragColor = vec4(tonemapped, sceneSample.a);",
+    "}"
+  ].join("\n");
+
+  var fullscreenVertex = [
+    "varying vec2 vUv;",
+    "void main() {",
+    "  vUv = uv;",
+    "  gl_Position = vec4(position, 1.0);",
+    "}"
+  ].join("\n");
+
+  function initPostProcessing() {
+    renderer.autoClear = false;
+    var rtW = Math.floor(cssW * Math.min(window.devicePixelRatio || 1, DPR_CAP) * qualityScale);
+    var rtH = Math.floor(cssH * Math.min(window.devicePixelRatio || 1, DPR_CAP) * qualityScale);
+    var halfW = Math.max(1, Math.floor(rtW / 2));
+    var halfH = Math.max(1, Math.floor(rtH / 2));
+
+    // HDR scene target — HalfFloat for HDR emission values
+    post.hdrRT = new THREE.WebGLRenderTarget(rtW, rtH, {
+      type: THREE.HalfFloatType,
+      format: THREE.RGBAFormat,
+      minFilter: THREE.LinearFilter,
+      magFilter: THREE.LinearFilter
+    });
+
+    // Bright extract target (half res)
+    post.brightRT = new THREE.WebGLRenderTarget(halfW, halfH, {
+      type: THREE.HalfFloatType,
+      format: THREE.RGBAFormat,
+      minFilter: THREE.LinearFilter,
+      magFilter: THREE.LinearFilter
+    });
+
+    // Ping-pong blur targets (half res)
+    post.blurRTA = new THREE.WebGLRenderTarget(halfW, halfH, {
+      type: THREE.HalfFloatType,
+      format: THREE.RGBAFormat,
+      minFilter: THREE.LinearFilter,
+      magFilter: THREE.LinearFilter
+    });
+    post.blurRTB = new THREE.WebGLRenderTarget(halfW, halfH, {
+      type: THREE.HalfFloatType,
+      format: THREE.RGBAFormat,
+      minFilter: THREE.LinearFilter,
+      magFilter: THREE.LinearFilter
+    });
+
+    // Fullscreen quad infrastructure
+    post.quadGeo = new THREE.PlaneGeometry(2, 2);
+    post.orthoCam = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+    post.quadScene = new THREE.Scene();
+
+    // Bright extract material
+    post.brightMat = new THREE.ShaderMaterial({
+      uniforms: {
+        tDiffuse: { value: null },
+        uThreshold: { value: BLOOM_THRESHOLD }
+      },
+      vertexShader: fullscreenVertex,
+      fragmentShader: brightExtractShader,
+      depthTest: false,
+      depthWrite: false
+    });
+
+    // Blur materials
+    post.blurHMat = new THREE.ShaderMaterial({
+      uniforms: {
+        tDiffuse: { value: null },
+        uDirection: { value: new THREE.Vector2(1, 0) },
+        uRadius: { value: BLOOM_RADIUS }
+      },
+      vertexShader: fullscreenVertex,
+      fragmentShader: blurShader,
+      depthTest: false,
+      depthWrite: false
+    });
+
+    post.blurVMat = new THREE.ShaderMaterial({
+      uniforms: {
+        tDiffuse: { value: null },
+        uDirection: { value: new THREE.Vector2(0, 1) },
+        uRadius: { value: BLOOM_RADIUS }
+      },
+      vertexShader: fullscreenVertex,
+      fragmentShader: blurShader,
+      depthTest: false,
+      depthWrite: false
+    });
+
+    // Composite material
+    post.compositeMat = new THREE.ShaderMaterial({
+      uniforms: {
+        tScene: { value: null },
+        tBloom: { value: null },
+        uBloomIntensity: { value: BLOOM_INTENSITY }
+      },
+      vertexShader: fullscreenVertex,
+      fragmentShader: compositeShader,
+      depthTest: false,
+      depthWrite: false
+    });
+
+    post.quadMesh = new THREE.Mesh(post.quadGeo, post.compositeMat);
+    post.quadScene.add(post.quadMesh);
+    post.initialized = true;
+  }
+
+  function resizePostProcessing() {
+    if (!post.initialized) return;
+    var dpr = Math.min(window.devicePixelRatio || 1, DPR_CAP) * qualityScale;
+    var rtW = Math.floor(cssW * dpr);
+    var rtH = Math.floor(cssH * dpr);
+    var halfW = Math.max(1, Math.floor(rtW / 2));
+    var halfH = Math.max(1, Math.floor(rtH / 2));
+    post.hdrRT.setSize(rtW, rtH);
+    post.brightRT.setSize(halfW, halfH);
+    post.blurRTA.setSize(halfW, halfH);
+    post.blurRTB.setSize(halfW, halfH);
+  }
+
+  function renderPipeline() {
+    if (!post.initialized) {
+      renderer.render(scene, camera);
+      return;
+    }
+
+    // 1. Render scene to HDR target
+    renderer.setRenderTarget(post.hdrRT);
+    renderer.clear();
+    renderer.render(scene, camera);
+
+    // 2. Bright extract — isolate emissive contribution
+    post.quadMesh.material = post.brightMat;
+    post.brightMat.uniforms.tDiffuse.value = post.hdrRT.texture;
+    renderer.setRenderTarget(post.brightRT);
+    renderer.clear();
+    renderer.render(post.quadScene, post.orthoCam);
+
+    // 3. Gaussian blur — multi-pass, large soft radius
+    // Ping-pong between blurRTA and blurRTB
+    post.quadMesh.material = post.blurHMat;
+    post.blurHMat.uniforms.tDiffuse.value = post.brightRT.texture;
+    renderer.setRenderTarget(post.blurRTA);
+    renderer.clear();
+    renderer.render(post.quadScene, post.orthoCam);
+
+    var readBlur = post.blurRTA;
+    var writeBlur = post.blurRTB;
+    for (var i = 0; i < BLOOM_PASSES - 1; i++) {
+      // Horizontal blur
+      post.quadMesh.material = post.blurHMat;
+      post.blurHMat.uniforms.tDiffuse.value = readBlur.texture;
+      renderer.setRenderTarget(writeBlur);
+      renderer.clear();
+      renderer.render(post.quadScene, post.orthoCam);
+
+      // Vertical blur
+      post.quadMesh.material = post.blurVMat;
+      post.blurVMat.uniforms.tDiffuse.value = writeBlur.texture;
+      renderer.setRenderTarget(readBlur);
+      renderer.clear();
+      renderer.render(post.quadScene, post.orthoCam);
+    }
+
+    // Final bloom texture
+    var bloomRT = readBlur;
+
+    // 4. Composite — scene + bloom, ACES tone map, output to screen
+    post.quadMesh.material = post.compositeMat;
+    post.compositeMat.uniforms.tScene.value = post.hdrRT.texture;
+    post.compositeMat.uniforms.tBloom.value = bloomRT.texture;
+    renderer.setRenderTarget(null);
+    renderer.clear();
+    renderer.render(post.quadScene, post.orthoCam);
+  }
+
   // ─── Init ─────────────────────────────────────────────────
   function init() {
     var device = getDevice();
@@ -1690,6 +1933,7 @@ import * as THREE from './vendor/three.module.min.js';
     createDustSystem(fieldCounts.dust, 0.18);
 
     resize();
+    initPostProcessing();
     targetEntranceProgress = 1;
     if (reduceMotion) { entranceProgress = 1; shotProgress = 0; targetShotProgress = 0; }
   }
@@ -1705,6 +1949,7 @@ import * as THREE from './vendor/three.module.min.js';
     camera.aspect = cssW / cssH;
     camera.updateProjectionMatrix();
     uScaleGlobal.value = cssH * 0.040;
+    resizePostProcessing();
   }
 
   // ─── Shot Progress Computation ───────────────────────────
@@ -1814,7 +2059,7 @@ import * as THREE from './vendor/three.module.min.js';
       }
       uScrollProgress.value = 0;
       uEntranceProgress.value = 1;
-      renderer.render(scene, camera);
+      renderPipeline();
       return;
     }
 
@@ -1867,7 +2112,7 @@ import * as THREE from './vendor/three.module.min.js';
       ref.uniform.value = ref.base * multiplier;
     }
 
-    renderer.render(scene, camera);
+    renderPipeline();
   }
 
   // ─── Events ───────────────────────────────────────────────
