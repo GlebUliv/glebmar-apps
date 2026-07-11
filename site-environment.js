@@ -404,6 +404,103 @@ import * as THREE from './vendor/three.module.min.js';
     return ALL_FLOWS[0];
   }
 
+  // ─── Energy Band — Dominant Volumetric Ribbon ─────────────
+  // ONE primary energy structure. Not many — one.
+  // A thick volumetric ribbon that wraps around the cube.
+  // Cross section: dense core → medium → fragmentation → dust
+  // Internal texture: streaks, calm regions, small currents
+  // Edges dissolve naturally — no abrupt termination.
+
+  var RIBBON = {
+    // Single continuous centerline — wraps around cube, upper-right to lower-left
+    centerline: [
+      [3.2,  1.8,  0.10],   // upper-right entry
+      [2.6,  1.3,  0.08],   // curve inward
+      [1.9,  0.8,  0.04],   // approach cube region
+      [1.2,  0.4,  0.02],   // beside cube (right)
+      [0.5,  0.15, -0.15],  // pass in front of cube
+      [-0.2, -0.05, -0.25], // wrap behind cube
+      [-0.9, -0.35, -0.10], // emerge left
+      [-1.7, -0.65, 0.05],  // extend lower-left
+      [-2.5, -0.9,  0.12]   // dissolve at edge
+    ],
+    // Cross-section radii at each centerline point (thick → thin)
+    coreRadius:    [0.18, 0.20, 0.22, 0.20, 0.16, 0.14, 0.18, 0.15, 0.10],
+    mediumRadius:  [0.42, 0.45, 0.48, 0.45, 0.38, 0.34, 0.40, 0.35, 0.25],
+    fragmentRadius:[0.75, 0.80, 0.85, 0.80, 0.68, 0.60, 0.70, 0.60, 0.42],
+    dustRadius:    [1.10, 1.15, 1.20, 1.15, 0.98, 0.88, 1.00, 0.85, 0.60],
+    // Internal texture — density multipliers along length (streaks vs calm)
+    textureStreaks: [1.3, 0.7, 1.2, 0.8, 1.4, 0.6, 1.1, 0.9, 1.0],
+    speedCoherence: 0.015
+  };
+
+  // Sample a position within the ribbon cross-section
+  // Returns { x, y, z, crossDist, crossTier }
+  // crossTier: 0=core, 1=medium, 2=fragment, 3=dust
+  function sampleRibbonPosition() {
+    var t = Math.random();
+    var segCount = RIBBON.centerline.length - 1;
+    var segIdx = Math.min(Math.floor(t * segCount), segCount - 1);
+    var segT = t * segCount - segIdx;
+    var st = segT * segT * (3 - 2 * segT);
+
+    var a = RIBBON.centerline[segIdx];
+    var b = RIBBON.centerline[segIdx + 1];
+
+    var cx = a[0] + (b[0] - a[0]) * st;
+    var cy = a[1] + (b[1] - a[1]) * st;
+    var cz = a[2] + (b[2] - a[2]) * st;
+
+    // Interpolate cross-section radii
+    var coreR   = RIBBON.coreRadius[segIdx]     + (RIBBON.coreRadius[segIdx + 1]     - RIBBON.coreRadius[segIdx])     * st;
+    var medR    = RIBBON.mediumRadius[segIdx]   + (RIBBON.mediumRadius[segIdx + 1]   - RIBBON.mediumRadius[segIdx])   * st;
+    var fragR   = RIBBON.fragmentRadius[segIdx] + (RIBBON.fragmentRadius[segIdx + 1] - RIBBON.fragmentRadius[segIdx]) * st;
+    var dustR   = RIBBON.dustRadius[segIdx]     + (RIBBON.dustRadius[segIdx + 1]     - RIBBON.dustRadius[segIdx])     * st;
+
+    // Texture density at this point along ribbon
+    var texIdx0 = segIdx, texIdx1 = Math.min(segIdx + 1, RIBBON.textureStreaks.length - 1);
+    var texDensity = RIBBON.textureStreaks[texIdx0] + (RIBBON.textureStreaks[texIdx1] - RIBBON.textureStreaks[texIdx0]) * st;
+
+    // Pick cross-section tier based on probability
+    // 20% core, 35% medium, 30% fragment, 15% dust
+    var tierRoll = Math.random();
+    var crossDist, crossTier;
+    if (tierRoll < 0.20) {
+      crossDist = Math.random() * coreR;
+      crossTier = 0;
+    } else if (tierRoll < 0.55) {
+      crossDist = coreR + Math.random() * (medR - coreR);
+      crossTier = 1;
+    } else if (tierRoll < 0.85) {
+      crossDist = medR + Math.random() * (fragR - medR);
+      crossTier = 2;
+    } else {
+      crossDist = fragR + Math.random() * (dustR - fragR);
+      crossTier = 3;
+    }
+
+    // Apply texture density modulation — denser streaks attract particles
+    if (Math.random() > texDensity * 0.8 && crossTier < 2) {
+      crossDist *= 1.3; // push toward edge in calm regions
+    }
+
+    // Random direction in cross-section plane
+    var angle = Math.random() * Math.PI * 2;
+    var dx = Math.cos(angle) * crossDist;
+    var dy = Math.sin(angle) * crossDist * 0.7; // slightly flattened
+    var dz = Math.sin(angle) * crossDist * 0.3; // thin in z
+
+    return {
+      x: cx + dx,
+      y: cy + dy,
+      z: cz + dz,
+      crossDist: crossDist,
+      crossTier: crossTier,
+      t: t,
+      texDensity: texDensity
+    };
+  }
+
   // ─── Cube Shaders (LOCKED — unchanged from V1) ────────────
   var cubeVertexShader = [
     "attribute float size;",
@@ -860,15 +957,10 @@ import * as THREE from './vendor/three.module.min.js';
     var mainCount = count - highlightCount;
     var colorPicker = isPrimary ? pickPrimaryColor : pickSecondaryColor;
     var halfWidth = config.width * 0.5;
-    var halfThickness = config.thickness * 0.5;
     var radiusRange = config.radiusMax - config.radiusMin;
     var bRatio = config.radiusBRatio;
 
-    // Depth layer assignment:
-    // Layer 1 — Foreground: 3% — large, soft, close to camera
-    // Layer 2 — Main Energy: 60% — dominant visual layer
-    // Layer 3 — Background Flow: 30% — smaller, lower contrast, behind
-    // Layer 4 — Atmospheric Dust: 7% — tiny, very low opacity, far back
+    // Depth layer assignment (unchanged from Layered Depth V1)
     var DEPTH_LAYERS = [
       { id: 1, fraction: 0.03, thickBase: -2.0, thickRange: 0.8, sizeMul: 1.8, brightMul: 1.15, opacityMul: 0.70 },
       { id: 2, fraction: 0.60, thickBase: 0.0,  thickRange: 0.3, sizeMul: 1.0, brightMul: 1.0,  opacityMul: 1.0 },
@@ -886,13 +978,21 @@ import * as THREE from './vendor/three.module.min.js';
       return DEPTH_LAYERS[1];
     }
 
-    // Flow-based particle generation with depth layering:
-    // 1. Pick a flow line (weighted)
-    // 2. Sample position along flow centerline + subtle turbulence
-    // 3. Map world position → stream coordinates (theta, radius) for shader
-    // 4. Accept based on density field
-    // 5. Assign depth layer → thickness offset, size scale, brightness scale
-    // 6. Brightness/size from light field × depth layer multiplier
+    // Cross-section tier → size/brightness multipliers
+    // Core: largest, brightest. Dust: smallest, dimmest.
+    var TIER_MUL = [
+      { sizeMul: 1.3, brightMul: 1.2 },   // core
+      { sizeMul: 1.0, brightMul: 1.0 },   // medium
+      { sizeMul: 0.6, brightMul: 0.6 },   // fragment
+      { sizeMul: 0.3, brightMul: 0.3 }    // dust
+    ];
+
+    // Ribbon-based particle generation:
+    // 1. Sample position along the single dominant ribbon
+    // 2. Cross-section tier determines density/size/brightness
+    // 3. Accept based on density field
+    // 4. Map to shader stream coordinates
+    // 5. Depth layer + light field applied
     for (var i = 0; i < mainCount; i++) {
       var theta = 0, streamRadius = 0, density = 0, light = 0;
       var widthOff = 0, thickOff = 0, flowSpeed = 0;
@@ -900,32 +1000,33 @@ import * as THREE from './vendor/three.module.min.js';
       var layer = pickDepthLayer();
 
       for (var attempt = 0; attempt < 30; attempt++) {
-        var flow = pickFlow();
-        var pos = sampleFlowPosition(flow);
+        var rpos = sampleRibbonPosition();
 
-        density = totalDensityAt(pos.x, pos.y, pos.z);
-        if (Math.random() < density) {
-          var stream = worldToStream(pos.x, pos.y, pos.z, rotMat, bRatio);
+        density = totalDensityAt(rpos.x, rpos.y, rpos.z);
+        // Cross-section tier affects acceptance — core always accepted, dust rarely
+        var tierAccept = [0.95, 0.80, 0.50, 0.20][rpos.crossTier];
+        if (Math.random() < density * tierAccept) {
+          var stream = worldToStream(rpos.x, rpos.y, rpos.z, rotMat, bRatio);
           theta = stream.theta;
           streamRadius = Math.max(config.radiusMin, Math.min(config.radiusMax, stream.radius));
 
-          // Tight width offsets — particles hug the flow centerline
-          widthOff = gaussian() * flow.flowWidth;
+          // Width offset from cross-section distance
+          widthOff = gaussian() * 0.06 + (rpos.crossDist - 0.3) * 0.15;
 
-          // Depth layer controls thickness offset (z-displacement via binormal)
+          // Depth layer controls thickness
           thickOff = layer.thickBase + gaussian() * layer.thickRange;
 
-          // Coherent speed — particles in same flow move together
-          flowSpeed = config.baseSpeed * (1.0 - flow.speedCoherence * 0.5 + Math.random() * flow.speedCoherence);
+          // Coherent speed along ribbon
+          flowSpeed = config.baseSpeed * (1.0 - RIBBON.speedCoherence * 0.5 + Math.random() * RIBBON.speedCoherence);
 
-          light = lightFieldAt(pos.x, pos.y, pos.z);
+          light = lightFieldAt(rpos.x, rpos.y, rpos.z);
           accepted = true;
           break;
         }
       }
 
       if (!accepted) {
-        // Rejected by density — sparse dust particle in negative space
+        // Rejected — sparse particle in negative space
         theta = Math.random() * Math.PI * 2;
         streamRadius = config.radiusMin + Math.random() * radiusRange;
         widthOff = gaussian() * halfWidth * 0.65;
@@ -963,29 +1064,29 @@ import * as THREE from './vendor/three.module.min.js';
       });
     }
 
-    // Highlights — exist because LIGHT exists along FLOW lines
-    // Highlights only on Layer 2 (main) and Layer 1 (foreground)
+    // Highlights — only in ribbon core where light is strong
     for (var j = 0; j < highlightCount; j++) {
       var hTheta = 0, hRadius = 0, hDensity = 0, hLight = 0;
       var hWidth = 0, hThick = 0, hSpeed = 0;
       var hAccepted = false;
-      // Foreground highlights 15%, main highlights 85%
       var hLayer = Math.random() < 0.15 ? DEPTH_LAYERS[0] : DEPTH_LAYERS[1];
 
       for (var attempt = 0; attempt < 50; attempt++) {
-        var hFlow = pickFlow();
-        var hPos = sampleFlowPosition(hFlow);
+        var hRpos = sampleRibbonPosition();
 
-        hDensity = totalDensityAt(hPos.x, hPos.y, hPos.z);
-        hLight = lightFieldAt(hPos.x, hPos.y, hPos.z);
+        // Only core and medium tiers can produce highlights
+        if (hRpos.crossTier > 1) continue;
+
+        hDensity = totalDensityAt(hRpos.x, hRpos.y, hRpos.z);
+        hLight = lightFieldAt(hRpos.x, hRpos.y, hRpos.z);
 
         if (hLight > 0.5 && hDensity > 0.3 && Math.random() < hLight * hDensity) {
-          var hStream = worldToStream(hPos.x, hPos.y, hPos.z, rotMat, bRatio);
+          var hStream = worldToStream(hRpos.x, hRpos.y, hRpos.z, rotMat, bRatio);
           hTheta = hStream.theta;
           hRadius = Math.max(config.radiusMin, Math.min(config.radiusMax, hStream.radius));
-          hWidth = gaussian() * hFlow.flowWidth * 0.5;
+          hWidth = gaussian() * 0.04;
           hThick = hLayer.thickBase + gaussian() * hLayer.thickRange * 0.5;
-          hSpeed = config.baseSpeed * (1.0 - hFlow.speedCoherence * 0.5 + Math.random() * hFlow.speedCoherence);
+          hSpeed = config.baseSpeed * (1.0 - RIBBON.speedCoherence * 0.5 + Math.random() * RIBBON.speedCoherence);
           hAccepted = true;
           break;
         }
