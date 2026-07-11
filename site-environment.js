@@ -162,6 +162,7 @@ import * as THREE from './vendor/three.module.min.js';
   var uReduceMotion = { value: reduceMotion ? 1.0 : 0.0 };
   var uScrollProgress = { value: 0 };
   var uEntranceProgress = { value: 0 };
+  var uLightDebug = { value: 0 };    // 1.0 = grayscale lighting debug
 
   // ─── Helpers ──────────────────────────────────────────────
   function getDevice() {
@@ -259,51 +260,87 @@ import * as THREE from './vendor/three.module.min.js';
     return Math.min(1.0, d);
   }
 
-  // ─── Light Field — Continuous Light Hierarchy ────────────
-  // The light field controls brightness, opacity, size, and highlight
-  // probability for every particle. Particles do NOT decide their own
-  // brightness — they sample this field.
+  // ─── Light Field — Physical Lighting Engine ──────────────
+  // Four-layer lighting system: Key, Fill, Rim, Ambient.
+  // Particles do NOT decide their own brightness — they sample this field.
+  // Cube particles sample the same field via lightFieldAtCube().
   //
-  // Zone A: Main highlight — upper-right, highest intensity
-  // Zone B: Secondary highlight — near cube, supports cube emergence
-  // Zone C: Transition — soft, wide, no sharp falloff
-  // Zone D: Dark region — very low intensity, negative space
+  // Layer 1 — Key Light: upper-right, strongest, illuminates primary band
+  // Layer 2 — Fill Light: centered on cube, very soft, reveals internals
+  // Layer 3 — Rim Light: from left/behind, separates cube from field, edges only
+  // Layer 4 — Ambient Volume: everywhere, very soft, almost invisible
   //
   // Brightness hierarchy target:
-  //   5%  very bright (Zone A core)
-  //  15%  bright     (Zone A medium / Zone B core)
-  //  35%  medium     (Zone B/C)
-  //  45%  dark       (Zone D / fragmentation)
+  //   5%  very bright (Key core)
+  //  15%  bright     (Key medium / Fill core)
+  //  35%  medium     (Fill / Rim / transition)
+  //  45%  dark       (Ambient only / fragmentation)
 
   var LIGHT_ZONES = [
-    { // Zone A — main highlight, upper-right
-      cx: 2.2, cy: 1.2, cz: 0,
-      radius: 2.0,
-      intensity: 1.0,
-      falloff: 1.6
-    },
-    { // Zone B — secondary highlight, near cube
-      cx: 0.3, cy: -0.1, cz: 0,
-      radius: 1.2,
-      intensity: 0.65,
-      falloff: 1.3
-    },
-    { // Zone C — transition, soft, wide
-      cx: -0.8, cy: -0.8, cz: 0,
+    { // Key Light — upper-right, strongest contribution
+      cx: 2.2, cy: 1.2, cz: 0.3,
       radius: 2.5,
-      intensity: 0.35,
-      falloff: 2.2
+      intensity: 1.0,
+      falloff: 1.5,
+      type: "key"
+    },
+    { // Fill Light — centered on cube, very soft, low intensity
+      cx: CUBE_OFFSET_X, cy: CUBE_OFFSET_Y, cz: 0,
+      radius: 0.8,
+      intensity: 0.30,
+      falloff: 1.0,
+      type: "fill"
+    },
+    { // Rim Light — from left/behind, separates cube from field
+      cx: -1.5, cy: 0.5, cz: -0.5,
+      radius: 1.5,
+      intensity: 0.25,
+      falloff: 1.2,
+      type: "rim"
+    },
+    { // Ambient Volume — environment emits light, very soft, large radius
+      cx: 0, cy: 0, cz: 0,
+      radius: 5.0,
+      intensity: 0.08,
+      falloff: 3.0,
+      type: "ambient"
     }
-    // Zone D is implicit — everywhere not covered by A/B/C is dark (0.02 baseline)
   ];
 
   function lightFieldAt(x, y, z) {
-    var light = 0.02; // Zone D baseline — near darkness
+    var light = 0.02; // baseline darkness
     for (var i = 0; i < LIGHT_ZONES.length; i++) {
       var z_ = LIGHT_ZONES[i];
       var dx = x - z_.cx, dy = y - z_.cy, dz = z - z_.cz;
       var dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
       var contribution = z_.intensity * Math.exp(-(dist * dist) / (z_.radius * z_.falloff));
+      light += contribution;
+    }
+    return Math.min(1.0, light);
+  }
+
+  // Cube-specific light sampling — rim light modulated by surfaceType
+  // surfaceType: 0=surface, 1=edge, 2=internal, 3=core
+  function lightFieldAtCube(x, y, z, surfaceType) {
+    // Convert local cube coords to world coords (approximate, ignore rotation)
+    var wx = x + CUBE_OFFSET_X;
+    var wy = y + CUBE_OFFSET_Y;
+    var wz = z;
+
+    var light = 0.02;
+    for (var i = 0; i < LIGHT_ZONES.length; i++) {
+      var z_ = LIGHT_ZONES[i];
+      var dx = wx - z_.cx, dy = wy - z_.cy, dz = wz - z_.cz;
+      var dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      var contribution = z_.intensity * Math.exp(-(dist * dist) / (z_.radius * z_.falloff));
+
+      // Rim light only affects edges and surface — not internal/core
+      if (z_.type === "rim") {
+        if (surfaceType === 1) contribution *= 1.0;       // edges — full rim
+        else if (surfaceType === 0) contribution *= 0.4;  // surface — partial rim
+        else contribution *= 0.0;                          // internal/core — no rim
+      }
+
       light += contribution;
     }
     return Math.min(1.0, light);
@@ -587,12 +624,17 @@ import * as THREE from './vendor/three.module.min.js';
     "varying vec3 vColor;",
     "varying float vBrightness;",
     "uniform float uOpacity;",
+    "uniform float uLightDebug;",
     "void main() {",
     "  vec2 coord = gl_PointCoord - vec2(0.5);",
     "  float dist = length(coord);",
     "  if (dist > 0.5) discard;",
     "  float alpha = smoothstep(0.5, 0.08, dist);",
-    "  gl_FragColor = vec4(vColor * vBrightness, alpha * uOpacity);",
+    "  if (uLightDebug > 0.5) {",
+    "    gl_FragColor = vec4(vec3(vBrightness), alpha);",
+    "  } else {",
+    "    gl_FragColor = vec4(vColor * vBrightness, alpha * uOpacity);",
+    "  }",
     "}"
   ].join("\n");
 
@@ -600,12 +642,17 @@ import * as THREE from './vendor/three.module.min.js';
     "varying vec3 vColor;",
     "varying float vBrightness;",
     "uniform float uOpacity;",
+    "uniform float uLightDebug;",
     "void main() {",
     "  vec2 coord = gl_PointCoord - vec2(0.5);",
     "  float dist = length(coord);",
     "  if (dist > 0.5) discard;",
     "  float alpha = smoothstep(0.5, 0.0, dist);",
-    "  gl_FragColor = vec4(vColor * vBrightness * 1.3, alpha * uOpacity);",
+    "  if (uLightDebug > 0.5) {",
+    "    gl_FragColor = vec4(vec3(vBrightness), alpha);",
+    "  } else {",
+    "    gl_FragColor = vec4(vColor * vBrightness * 1.3, alpha * uOpacity);",
+    "  }",
     "}"
   ].join("\n");
 
@@ -660,11 +707,12 @@ import * as THREE from './vendor/three.module.min.js';
     z += (Math.random() - 0.5) * noise;
 
     var c = pickSurfaceColor();
+    var sLight = lightFieldAtCube(x, y, z, 0);
     return {
       x: x, y: y, z: z,
       r: c[0], g: c[1], b: c[2],
       size: 1.0 + Math.random() * 1.5,
-      brightness: 0.75 + Math.random() * 0.25,
+      brightness: Math.min(1.0, sLight * (0.85 + Math.random() * 0.15)),
       phase: Math.random() * Math.PI * 2,
       surfaceType: 0,
       depthBias: (Math.random() - 0.5) * 0.4
@@ -701,11 +749,12 @@ import * as THREE from './vendor/three.module.min.js';
     z += (Math.random() - 0.5) * noise;
 
     var c = pickEdgeColor();
+    var eLight = lightFieldAtCube(x, y, z, 1);
     return {
       x: x, y: y, z: z,
       r: c[0], g: c[1], b: c[2],
       size: 0.8 + Math.random() * 1.2,
-      brightness: 0.85 + Math.random() * 0.15,
+      brightness: Math.min(1.0, eLight * (0.90 + Math.random() * 0.10)),
       phase: Math.random() * Math.PI * 2,
       surfaceType: 1,
       depthBias: (Math.random() - 0.5) * 0.4
@@ -718,11 +767,12 @@ import * as THREE from './vendor/three.module.min.js';
     var y = (Math.random() * 2 - 1) * h;
     var z = (Math.random() * 2 - 1) * h;
     var c = pickInternalColor();
+    var iLight = lightFieldAtCube(x, y, z, 2);
     return {
       x: x, y: y, z: z,
       r: c[0], g: c[1], b: c[2],
       size: 0.5 + Math.random() * 0.8,
-      brightness: 0.55 + Math.random() * 0.30,
+      brightness: Math.min(1.0, iLight * (0.80 + Math.random() * 0.20)),
       phase: Math.random() * Math.PI * 2,
       surfaceType: 2,
       depthBias: (Math.random() - 0.5) * 0.4
@@ -736,11 +786,12 @@ import * as THREE from './vendor/three.module.min.js';
     var dist = Math.sqrt(x * x + y * y + z * z);
     var centerFactor = 1 - Math.min(1, dist / (CORE_RADIUS * 2));
     var c = Math.random() < 0.70 ? COLOR_PALE_GREEN : COLOR_SOFT_WHITE;
+    var coreLight = lightFieldAtCube(x, y, z, 3);
     return {
       x: x, y: y, z: z,
       r: c[0], g: c[1], b: c[2],
       size: 0.4 + Math.random() * 0.6,
-      brightness: 0.55 + centerFactor * 0.40,
+      brightness: Math.min(1.0, coreLight * (0.75 + centerFactor * 0.25)),
       phase: Math.random() * Math.PI * 2,
       surfaceType: 3,
       depthBias: (Math.random() - 0.5) * 0.3
@@ -789,7 +840,8 @@ import * as THREE from './vendor/three.module.min.js';
     var mainMat = new THREE.ShaderMaterial({
       uniforms: {
         uTime: uTime, uScale: uScaleGlobal,
-        uOpacity: { value: 0.92 }, uReduceMotion: uReduceMotion
+        uOpacity: { value: 0.92 }, uReduceMotion: uReduceMotion,
+        uLightDebug: uLightDebug
       },
       vertexShader: cubeVertexShader,
       fragmentShader: cubeFragmentShader,
@@ -810,7 +862,8 @@ import * as THREE from './vendor/three.module.min.js';
     var coreMat = new THREE.ShaderMaterial({
       uniforms: {
         uTime: uTime, uScale: uScaleGlobal,
-        uOpacity: { value: 0.40 }, uReduceMotion: uReduceMotion
+        uOpacity: { value: 0.40 }, uReduceMotion: uReduceMotion,
+        uLightDebug: uLightDebug
       },
       vertexShader: cubeVertexShader,
       fragmentShader: cubeHighlightFragmentShader,
@@ -923,12 +976,17 @@ import * as THREE from './vendor/three.module.min.js';
     "varying vec3 vColor;",
     "varying float vBrightness;",
     "uniform float uOpacity;",
+    "uniform float uLightDebug;",
     "void main() {",
     "  vec2 coord = gl_PointCoord - vec2(0.5);",
     "  float dist = length(coord);",
     "  if (dist > 0.5) discard;",
     "  float alpha = smoothstep(0.5, 0.10, dist);",
-    "  gl_FragColor = vec4(vColor * vBrightness, alpha * uOpacity);",
+    "  if (uLightDebug > 0.5) {",
+    "    gl_FragColor = vec4(vec3(vBrightness), alpha);",
+    "  } else {",
+    "    gl_FragColor = vec4(vColor * vBrightness, alpha * uOpacity);",
+    "  }",
     "}"
   ].join("\n");
 
@@ -936,12 +994,17 @@ import * as THREE from './vendor/three.module.min.js';
     "varying vec3 vColor;",
     "varying float vBrightness;",
     "uniform float uOpacity;",
+    "uniform float uLightDebug;",
     "void main() {",
     "  vec2 coord = gl_PointCoord - vec2(0.5);",
     "  float dist = length(coord);",
     "  if (dist > 0.5) discard;",
     "  float alpha = smoothstep(0.5, 0.0, dist);",
-    "  gl_FragColor = vec4(vColor * vBrightness * 1.4, alpha * uOpacity);",
+    "  if (uLightDebug > 0.5) {",
+    "    gl_FragColor = vec4(vec3(vBrightness), alpha);",
+    "  } else {",
+    "    gl_FragColor = vec4(vColor * vBrightness * 1.4, alpha * uOpacity);",
+    "  }",
     "}"
   ].join("\n");
 
@@ -977,12 +1040,17 @@ import * as THREE from './vendor/three.module.min.js';
     "varying vec3 vColor;",
     "varying float vBrightness;",
     "uniform float uOpacity;",
+    "uniform float uLightDebug;",
     "void main() {",
     "  vec2 coord = gl_PointCoord - vec2(0.5);",
     "  float dist = length(coord);",
     "  if (dist > 0.5) discard;",
     "  float alpha = smoothstep(0.5, 0.12, dist);",
-    "  gl_FragColor = vec4(vColor * vBrightness, alpha * uOpacity);",
+    "  if (uLightDebug > 0.5) {",
+    "    gl_FragColor = vec4(vec3(vBrightness), alpha);",
+    "  } else {",
+    "    gl_FragColor = vec4(vColor * vBrightness, alpha * uOpacity);",
+    "  }",
     "}"
   ].join("\n");
 
@@ -1242,7 +1310,8 @@ import * as THREE from './vendor/three.module.min.js';
       return new THREE.ShaderMaterial({
         uniforms: Object.assign({}, sharedUniforms, {
           uCullMode: { value: cullMode },
-          uOpacity: { value: opacity }
+          uOpacity: { value: opacity },
+          uLightDebug: uLightDebug
         }),
         vertexShader: fieldVertexShader,
         fragmentShader: isHighlight ? fieldHighlightFragmentShader : fieldFragmentShader,
@@ -1334,7 +1403,8 @@ import * as THREE from './vendor/three.module.min.js';
         uPointScale: uScaleGlobal,
         uReduceMotion: uReduceMotion,
         uEntrance: uEntranceProgress,
-        uOpacity: { value: opacity }
+        uOpacity: { value: opacity },
+        uLightDebug: uLightDebug
       },
       vertexShader: dustVertexShader,
       fragmentShader: dustFragmentShader,
@@ -1444,6 +1514,10 @@ import * as THREE from './vendor/three.module.min.js';
   function animate(time) {
     if (!animating) return;
     rafId = requestAnimationFrame(animate);
+
+    // Lighting debug mode — grayscale only, cube hidden
+    uLightDebug.value = window.__lightDebug ? 1.0 : 0.0;
+    if (cubeGroup) cubeGroup.visible = !window.__lightDebug;
 
     var dt = lastTime ? Math.min(time - lastTime, 33) : 16;
     lastTime = time;
