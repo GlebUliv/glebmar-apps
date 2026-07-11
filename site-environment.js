@@ -1194,17 +1194,27 @@ var FLOW_C = {
     "  vColor = aColorMix;",
     "  vMaterialId = aMaterialId;",
     "  float clarityMod = mix(1.0, mix(0.20, 1.0, clarityFactor), frontWeight);",
+    // Composition focus: cube is the focal point.
+    // Embrace zone — energy halo at medium distance from cube.
+    // Near cube: clarityMod keeps particles dim (cube shines).
+    // Medium distance: embraceBoost peaks (energy embraces cube).
+    // Far: embraceBoost fades (atmosphere supports, doesn't compete).
+    "  float cubeProximity = 1.0 - clarityFactor;",
+    "  float embraceBoost = smoothstep(0.0, 0.35, cubeProximity) * (1.0 - smoothstep(0.65, 1.0, cubeProximity));",
+    "  float focusWeight = mix(0.82, 1.18, embraceBoost);",
     // Vein brightness redistribution — veins brighter, surrounding calmer, no total increase
     "  float veinBoost = mix(0.82, 1.18, aVeinFactor);",
-    "  vDiffuse = matDiffuse * densityMod * widthFactor * clarityMod * veinBoost;",
+    "  vDiffuse = matDiffuse * densityMod * widthFactor * clarityMod * veinBoost * focusWeight;",
     // Stream emission: center emits more, edges less, density reinforces
-    "  vEmission = matEmission * widthFactor * densityMod * clarityMod * veinBoost;",
+    "  vEmission = matEmission * widthFactor * densityMod * clarityMod * veinBoost * focusWeight;",
     "  vSaturation = matSat;",
     "  vSoftness = matSoft;",
     // Depth attenuation
     "  float depth = -mvPosition.z;",
     "  float depthFactor = smoothstep(3.0, 7.5, depth);",
-    "  gl_PointSize = max(1.0, aSize * uPointScale * matSize * (1.0 - depthFactor * 0.25) / depth);",
+    // Size emphasis — embrace zone particles slightly larger, atmosphere smaller
+    "  float sizeFocus = mix(0.88, 1.15, embraceBoost);",
+    "  gl_PointSize = max(1.0, aSize * uPointScale * matSize * sizeFocus * (1.0 - depthFactor * 0.25) / depth);", 
     "  gl_Position = projectionMatrix * mvPosition;",
     "}"
   ].join("\n");
@@ -1236,7 +1246,7 @@ var FLOW_C = {
     "  } else {",
     "    vec3 satColor = mix(vec3(dot(vColor, vec3(0.299, 0.587, 0.114))), vColor, vSaturation);",
     "    vec3 diffuseColor = satColor * vDiffuse;",
-    "    vec3 emissiveColor = mix(vColor, vec3(0.8, 1.0, 0.9), 0.6) * vEmission * 1.3;",
+    "    vec3 emissiveColor = mix(vColor, vec3(0.85, 1.0, 0.92), 0.65) * vEmission * 1.3;",
     "    gl_FragColor = vec4(diffuseColor + emissiveColor, alpha * uOpacity);",
     "  }",
     "}"
