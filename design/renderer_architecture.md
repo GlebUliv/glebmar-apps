@@ -1,20 +1,29 @@
-# Renderer Architecture — Site Environment Engine + Core Cube V1 + Field Engine V1
+# Renderer Architecture — Composition Director + Core Cube V1 + Field Engine V1
 
-## Site Environment Engine
+## Composition Director
 
 ### Philosophy
 
-There is no Hero Renderer. There is one continuous Site Environment.
+The website is not a page with a WebGL animation behind it.
+
+It is a continuous digital environment through which the visitor moves.
+
+The visitor never sees the entire environment. Each section reveals only a carefully composed fragment.
+
+Think like cinematography. The environment already exists. Every section is simply another camera shot.
 
 ```
 Site
-  ↓
-Environment (WebGL Scene)
-  ↓
-Camera Composition
+ ├── Environment (WebGL Scene)
+ └── Composition Director
+        ├── Shot 01 — Arrival
+        ├── Shot 02 — Publisher
+        ├── Shot 03 — Principles
+        ├── Shot 04 — Products
+        └── Shot 05 — Closing
 ```
 
-Hero exists inside the Environment. Never the opposite.
+The Environment is global. The Composition Director decides how it is viewed.
 
 ### Architecture
 
@@ -29,89 +38,134 @@ Body
         Footer
 ```
 
-The renderer is page infrastructure, not a Hero component.
+The renderer is page infrastructure. The Composition Director is a presentation layer — it decides what part of the scene is visible, how it is framed, and how it evolves. It does not render particles or create effects.
 
 ### Canvas
 
 - **Element**: `<canvas class="site-canvas">` — first child of `<body>`
 - **CSS**: `position: fixed; inset: 0; width: 100vw; height: 100vh; pointer-events: none; z-index: 0; background: transparent`
-- **Boundary**: The browser viewport. Never clipped by Hero. Never clipped by sections. Never resized by Hero.
+- **Boundary**: The browser viewport. Never clipped by Hero. Never clipped by sections.
 - **Content layer**: `main` and `.footer` have `position: relative; z-index: 1` to sit above the canvas.
 
 ### Scene Ownership
 
+One renderer. One scene. One camera. One animation loop.
+
 - The renderer owns the scene.
-- The page owns camera states.
+- The Composition Director owns shot definitions.
 - Hero does not own the renderer.
 
-### Single Instance
+### Shot State Model
 
-- One renderer
-- One Three.js scene
-- One camera
-- One animation loop
-- One resize handler
+Each shot defines only presentation values — camera position, camera target, cube visibility, field opacity, dust opacity, and scroll dispersion. It never owns rendering logic.
 
-### Scene States
+| Shot | Section | Camera Position | Camera Target | Cube Visibility | Field Opacity | Dust Opacity | Dispersion |
+|------|---------|-----------------|---------------|-----------------|---------------|-------------|------------|
+| 01 | Hero | (1.0, 0.2, 4.5) | (0, 0, 0) | 1.00 | 1.00 | 1.00 | 0.00 |
+| 02 | Publisher | (-1.2, 0.6, 5.0) | (0, 0, 0) | 1.00 | 1.00 | 0.90 | 0.02 |
+| 03 | Principles | (-2.2, 0.4, 5.8) | (0, 0, 0) | 0.75 | 0.80 | 0.75 | 0.05 |
+| 04 | Products | (1.8, -0.4, 4.8) | (0, 0, 0) | 0.90 | 0.90 | 0.80 | 0.08 |
+| 05 | Closing | (0.3, 1.2, 7.5) | (0, 0, 0) | 0.30 | 0.40 | 0.50 | 0.12 |
 
-Each page section maps to a scene state. Each state defines camera position, cube transform, field opacity, dust opacity, and scroll dispersion.
+### Camera State Graph
 
-| State | Section | Camera | Cube Position | Cube Scale | Field Opacity | Dust Opacity | Dispersion |
-|-------|---------|--------|---------------|-----------|---------------|-------------|------------|
-| 0 | Hero | (0, 0, 5) → (0, 0, 0) | (0.5, 0, 0) | 1.00 | 1.00 | 1.00 | 0.00 |
-| 1 | Publisher | (0, 0.1, 5) → (0, -0.1, 0) | (0, -0.3, 0.3) | 0.75 | 0.85 | 0.85 | 0.05 |
-| 2 | Principles | (0, 0.2, 5) → (0, -0.2, 0) | (-0.3, -0.5, 0.8) | 0.55 | 0.65 | 0.65 | 0.10 |
-| 3 | Products | (0, 0.3, 5) → (0, -0.3, 0) | (0.4, -0.7, 1.5) | 0.35 | 0.45 | 0.45 | 0.15 |
-| 4 | Footer | (0, 0.4, 5) → (0, -0.4, 0) | (0, -0.9, 2.5) | 0.20 | 0.25 | 0.25 | 0.20 |
+The cube is a sculpture at world origin (0, 0, 0). It never moves. The camera moves around it.
 
-States 0 (Hero) and 1 (Publisher) are fully implemented. States 2–4 are placeholders for future choreography.
+```
+Shot 01 (1.0, 0.2, 4.5) — close, right
+    ↓
+Shot 02 (-1.2, 0.6, 5.0) — shift left, up
+    ↓
+Shot 03 (-2.2, 0.4, 5.8) — pull back, side
+    ↓
+Shot 04 (1.8, -0.4, 4.8) — opposite side, lower
+    ↓
+Shot 05 (0.3, 1.2, 7.5) — far back, above
+```
 
-### State Transition
+Camera distance ranges from 4.5 to 7.5 model units. The cube appears larger or smaller purely through perspective — its actual scale never changes.
 
-Scroll does not move objects directly. Scroll changes state progress:
+### Shot Composition Principles
+
+**Shot 01 — Arrival**
+- Focal point: the cube
+- Hidden: most of the field extends beyond the viewport
+- Negative space: left side of frame
+- Discovery: the visitor senses there is more outside
+
+**Shot 02 — Publisher**
+- Focal point: the field
+- Hidden: the cube is off-center, not dominant
+- Negative space: right side of frame
+- Discovery: the environment is larger than Shot 01 suggested
+
+**Shot 03 — Principles**
+- Focal point: field fragments
+- Hidden: the cube is secondary, reduced visibility
+- Negative space: large areas of empty space
+- Discovery: the world continues in all directions
+
+**Shot 04 — Products**
+- Focal point: the cube returns from a new angle
+- Hidden: the opposite side of the field
+- Negative space: upper frame
+- Discovery: another perspective of the same sculpture
+
+**Shot 05 — Closing**
+- Focal point: atmosphere
+- Hidden: the cube nearly disappears
+- Negative space: the entire frame becomes sparse
+- Discovery: the environment dissolves into space
+
+### Transition Strategy
+
+Scroll does not bind camera directly to scroll position.
 
 ```
 Scroll
-  ↓
-State Progress (0..N-1, fractional)
-  ↓
-Target State
-  ↓
-Smooth Interpolation (exp damping, τ ≈ 280ms)
+    ↓
+Shot Progress (0..N-1, fractional)
+    ↓
+Target Composition
+    ↓
+Smooth Interpolation (exp damping + smoothstep easing)
 ```
 
-Every animated value interpolates:
-- Camera position (x, y, z)
-- Camera lookAt target (x, y, z)
-- Cube position (x, y, z)
-- Cube scale
-- Field opacity (all materials)
-- Dust opacity
-- Scroll dispersion
+- **Camera inertia**: exp damping with τ ≈ 360ms — the camera feels heavy, cinematic
+- **Eased transitions**: smoothstep applied to fractional progress — no linear interpolation
+- **All values interpolate**: camera position, camera target, cube visibility, field opacity, dust opacity, scroll dispersion
 
-### State Progress Computation
+### Environment Scale Strategy
 
-```javascript
-viewCenter = viewportHeight/2 + scrollY
-sectionCenters = [measured center of each section element]
+The environment is significantly larger than the viewport — approximately 2–3× the visible browser area.
 
-if viewCenter <= sectionCenters[0]: stateProgress = 0
-if viewCenter >= sectionCenters[last]: stateProgress = N-1
-else: linear interpolation between adjacent section centers
-```
-
-### Scene Scale
-
-The Environment extends well beyond the viewport. The browser crops it. Field radius reaches up to 2.805 model units; dust extends to 5.0. The camera at z=5 with 32° FOV shows approximately ±1.6 units horizontally — the field extends far beyond this, creating natural edge cropping.
+- Field radius: up to 2.805 model units from center
+- Dust radius: up to 5.0 model units from center
+- Camera at z=4.5–7.5 with 32° FOV shows approximately ±1.4–2.4 units horizontally
+- The field extends well beyond the visible frame at every shot
+- The browser crops the scene naturally — the visitor never perceives the full environment
 
 ### Reduced-Motion Behavior
 
 When `prefers-reduced-motion: reduce`:
-- State progress frozen at 0 (Hero state)
+- Shot progress frozen at 0 (Shot 01 — Arrival)
+- Camera locked at Shot 01 position
 - Cube rotation stops
 - Field flow stops
 - Dust drift stops
 - Static composition preserved
+
+### Future Choreography Plan
+
+The current shots define camera positions and visibilities. Future sprints can:
+
+- **Refine shot framing**: Adjust camera positions for more dramatic compositions
+- **Add camera path curves**: Replace linear interpolation with spline paths between shots
+- **Add shot-specific field density**: Per-shot density modulation beyond opacity
+- **Add atmospheric variation**: Per-shot fog color/density
+- **Add lighting variation**: Per-shot light intensity/color
+
+All of these are parameter changes — no structural change required.
 
 ### Future Expansion Strategy
 
@@ -119,17 +173,17 @@ The architecture is prepared for:
 
 - **Lighting Engine**: Add lights to scene — no structural change
 - **Atmospheric Engine**: Add fog/post-processing — no structural change
-- **Interaction Engine**: Pointer events on window, not canvas — already wired
-- **Constellation Formation**: Add new scene state or modify existing — no structural change
-- **Full Choreography**: Tune state parameters — no structural change
+- **Interaction Engine**: Pointer events on window — already wired
+- **Constellation Formation**: Add new shot or modify existing — no structural change
 
 ### Known Limitations
 
-- States 2–4 are placeholders — cube movement and opacity reduction are linear, not cinematic
+- Shot transitions use linear interpolation between adjacent shot pairs (with smoothstep easing) — not spline paths
 - No IntersectionObserver pause — renderer runs for entire page (acceptable: single scene, GPU-only)
 - Pointer interaction is wired but not visually refined
-- Scroll dispersion is basic — not final choreography
+- Scroll dispersion is minimal — not final choreography
 - No bloom or post-processing
+- Cube visibility uses opacity multiplier — no per-particle fade
 
 ---
 
@@ -295,7 +349,7 @@ When `prefers-reduced-motion: reduce`:
 
 ## Development Mode
 
-Sprint 03A Orbit Engine V1 has been replaced by Sprint 03B Field Engine V1. Sprint 04 replaced the Hero-local renderer with the Site Environment Engine. The orbit ring mental model is retired. No placeholder systems remain.
+Sprint 03A Orbit Engine V1 has been replaced by Sprint 03B Field Engine V1. Sprint 04 replaced the Hero-local renderer with the Site Environment Engine. Sprint 05 replaced scene states with the Composition Director — the camera now moves around a stationary cube, and each section is a camera shot. The orbit ring mental model is retired. No placeholder systems remain.
 
 ---
 
@@ -567,7 +621,7 @@ Validated at T=0, T=60, T=300 seconds. Field geometry remains stable — only pa
 ## Future Architecture (Reserved)
 
 The following systems are architecturally reserved but not implemented in this sprint:
-- Bloom / post-processing (Sprint 05+)
-- Pointer interaction refinement (Sprint 05+)
-- Full scroll choreography — cinematic state transitions (Sprint 05+)
+- Bloom / post-processing (Sprint 06+)
+- Pointer interaction refinement (Sprint 06+)
+- Full scroll choreography — spline camera paths, per-shot density (Sprint 06+)
 - Signature constellation animation (future)

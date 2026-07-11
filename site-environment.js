@@ -81,48 +81,54 @@ import * as THREE from './vendor/three.module.min.js';
   var COLOR_PALE_GREEN = [0.655, 0.890, 0.761];
   var COLOR_SOFT_WHITE = [0.969, 1.000, 0.980];
 
-  // ─── Scene State Architecture ─────────────────────────────
-  // Each state defines camera, cube transform, opacity, density.
-  // Scroll drives state progress; values interpolate smoothly.
-  var SCENE_STATES = [
-    { // Hero — cube large, right side
-      camera: { x: 0, y: 0, z: 5, lookX: 0, lookY: 0, lookZ: 0 },
-      cube: { posX: 0.5, posY: 0, posZ: 0, scale: 1.0 },
+  // ─── Composition Director — Shot Architecture ────────────
+  // The cube is a sculpture in world space at origin.
+  // The camera moves around it. Each shot is a camera composition.
+  // Cube never moves. Camera frames it differently per section.
+  var SHOTS = [
+    { // Shot 01 — Arrival (Hero)
+      // Close, slightly right, looking at cube center
+      camera: { x: 1.0, y: 0.2, z: 4.5, lookX: 0, lookY: 0, lookZ: 0 },
+      cubeVisibility: 1.0,
       fieldOpacity: 1.0,
       dustOpacity: 1.0,
       scrollDispersion: 0
     },
-    { // Publisher — cube smaller, lower
-      camera: { x: 0, y: 0.1, z: 5, lookX: 0, lookY: -0.1, lookZ: 0 },
-      cube: { posX: 0, posY: -0.3, posZ: 0.3, scale: 0.75 },
-      fieldOpacity: 0.85,
-      dustOpacity: 0.85,
+    { // Shot 02 — Publisher
+      // Shift left and up — field occupies more visual space
+      camera: { x: -1.2, y: 0.6, z: 5.0, lookX: 0, lookY: 0, lookZ: 0 },
+      cubeVisibility: 1.0,
+      fieldOpacity: 1.0,
+      dustOpacity: 0.9,
+      scrollDispersion: 0.02
+    },
+    { // Shot 03 — Principles
+      // Pull back, move to side — cube becomes secondary, negative space
+      camera: { x: -2.2, y: 0.4, z: 5.8, lookX: 0, lookY: 0, lookZ: 0 },
+      cubeVisibility: 0.75,
+      fieldOpacity: 0.80,
+      dustOpacity: 0.75,
       scrollDispersion: 0.05
     },
-    { // Principles — cube further, lighter
-      camera: { x: 0, y: 0.2, z: 5, lookX: 0, lookY: -0.2, lookZ: 0 },
-      cube: { posX: -0.3, posY: -0.5, posZ: 0.8, scale: 0.55 },
-      fieldOpacity: 0.65,
-      dustOpacity: 0.65,
-      scrollDispersion: 0.10
+    { // Shot 04 — Products
+      // Move to another side, closer — reconnect with sculpture
+      camera: { x: 1.8, y: -0.4, z: 4.8, lookX: 0, lookY: 0, lookZ: 0 },
+      cubeVisibility: 0.90,
+      fieldOpacity: 0.90,
+      dustOpacity: 0.80,
+      scrollDispersion: 0.08
     },
-    { // Products — cube background sculpture
-      camera: { x: 0, y: 0.3, z: 5, lookX: 0, lookY: -0.3, lookZ: 0 },
-      cube: { posX: 0.4, posY: -0.7, posZ: 1.5, scale: 0.35 },
-      fieldOpacity: 0.45,
-      dustOpacity: 0.45,
-      scrollDispersion: 0.15
-    },
-    { // Footer — cube nearly disappears
-      camera: { x: 0, y: 0.4, z: 5, lookX: 0, lookY: -0.4, lookZ: 0 },
-      cube: { posX: 0, posY: -0.9, posZ: 2.5, scale: 0.20 },
-      fieldOpacity: 0.25,
-      dustOpacity: 0.25,
-      scrollDispersion: 0.20
+    { // Shot 05 — Closing
+      // Pull far back, slightly above — cube nearly disappears
+      camera: { x: 0.3, y: 1.2, z: 7.5, lookX: 0, lookY: 0, lookZ: 0 },
+      cubeVisibility: 0.30,
+      fieldOpacity: 0.40,
+      dustOpacity: 0.50,
+      scrollDispersion: 0.12
     }
   ];
 
-  // Section selectors matching SCENE_STATES order
+  // Section selectors matching SHOTS order
   var SECTION_SELECTORS = [
     '.hero',
     '.publisher',
@@ -135,9 +141,10 @@ import * as THREE from './vendor/three.module.min.js';
   var renderer, scene, camera;
   var cubeGroup;
   var fieldObjects = [];
-  var materialOpacityRefs = []; // {uniform, baseOpacity} for state-driven opacity
+  var materialOpacityRefs = []; // {uniform, base, type} for shot-driven opacity
+  var cubeOpacityRefs = [];     // {uniform, base} for cube visibility
   var animating = false, rafId = null, lastTime = 0;
-  var stateProgress = 0, targetStateProgress = 0; // 0..(STATES-1), fractional
+  var shotProgress = 0, targetShotProgress = 0; // 0..(SHOTS-1), fractional
   var entranceProgress = 0, targetEntranceProgress = 0;
   var cssW = 0, cssH = 0;
   var pointerTargetX = -9999, pointerTargetY = -9999;
@@ -161,6 +168,7 @@ import * as THREE from './vendor/three.module.min.js';
   }
 
   function lerp(a, b, t) { return a + (b - a) * t; }
+  function smoothstep(t) { return t * t * (3 - 2 * t); }
 
   function gaussian() {
     var u = 1 - Math.random();
@@ -437,6 +445,7 @@ import * as THREE from './vendor/three.module.min.js';
     mainPoints.frustumCulled = false;
     mainPoints.renderOrder = 0;
     cubeGroup.add(mainPoints);
+    cubeOpacityRefs.push({ uniform: mainMat.uniforms.uOpacity, base: 0.92 });
 
     var coreParts = [];
     for (i = 0; i < counts.core; i++) coreParts.push(generateCoreParticle());
@@ -457,6 +466,7 @@ import * as THREE from './vendor/three.module.min.js';
     corePoints.frustumCulled = false;
     corePoints.renderOrder = 0;
     cubeGroup.add(corePoints);
+    cubeOpacityRefs.push({ uniform: coreMat.uniforms.uOpacity, base: 0.40 });
 
     scene.add(cubeGroup);
   }
@@ -864,8 +874,10 @@ import * as THREE from './vendor/three.module.min.js';
     cssH = window.innerHeight;
     var aspect = cssW / cssH || 1;
     camera = new THREE.PerspectiveCamera(32, aspect, 0.1, 100);
-    camera.position.set(0, 0, 5);
-    camera.lookAt(0, 0, 0);
+    // Initial camera from Shot 01
+    var shot0 = SHOTS[0];
+    camera.position.set(shot0.camera.x, shot0.camera.y, shot0.camera.z);
+    camera.lookAt(shot0.camera.lookX, shot0.camera.lookY, shot0.camera.lookZ);
 
     renderer = new THREE.WebGLRenderer({
       canvas: canvas, alpha: true, antialias: true,
@@ -882,7 +894,7 @@ import * as THREE from './vendor/three.module.min.js';
 
     resize();
     targetEntranceProgress = 1;
-    if (reduceMotion) { entranceProgress = 1; stateProgress = 0; targetStateProgress = 0; }
+    if (reduceMotion) { entranceProgress = 1; shotProgress = 0; targetShotProgress = 0; }
   }
 
   // ─── Resize ───────────────────────────────────────────────
@@ -898,9 +910,9 @@ import * as THREE from './vendor/three.module.min.js';
     uScaleGlobal.value = cssH * 0.040;
   }
 
-  // ─── State Progress Computation ───────────────────────────
-  // Scroll → state progress → smooth interpolation
-  // Never bind object position directly to scroll pixels.
+  // ─── Shot Progress Computation ───────────────────────────
+  // Scroll → shot progress → smooth interpolation
+  // Never bind camera directly to scroll position.
   function updateScroll() {
     var vh = window.innerHeight;
     var viewCenter = vh / 2 + window.scrollY;
@@ -917,14 +929,14 @@ import * as THREE from './vendor/three.module.min.js';
     }
 
     if (viewCenter <= centers[0]) {
-      targetStateProgress = 0;
+      targetShotProgress = 0;
     } else if (viewCenter >= centers[centers.length - 1]) {
-      targetStateProgress = SCENE_STATES.length - 1;
+      targetShotProgress = SHOTS.length - 1;
     } else {
       for (var i = 0; i < centers.length - 1; i++) {
         if (viewCenter >= centers[i] && viewCenter < centers[i + 1]) {
           var t = (viewCenter - centers[i]) / (centers[i + 1] - centers[i]);
-          targetStateProgress = i + t;
+          targetShotProgress = i + t;
           break;
         }
       }
@@ -965,10 +977,11 @@ import * as THREE from './vendor/three.module.min.js';
       }
     }
 
-    var stateK = 1 - Math.exp(-3.6 * dtSeconds);
+    // Camera has inertia — slower damping than entrance
+    var shotK = 1 - Math.exp(-2.8 * dtSeconds); // ~360ms tau — cinematic inertia
     var entranceK = 1 - Math.exp(-1.8 * dtSeconds);
 
-    stateProgress += (targetStateProgress - stateProgress) * stateK;
+    shotProgress += (targetShotProgress - shotProgress) * shotK;
     entranceProgress += (targetEntranceProgress - entranceProgress) * entranceK;
 
     if (!reduceMotion) {
@@ -976,13 +989,13 @@ import * as THREE from './vendor/three.module.min.js';
       pointerSmoothY += (pointerTargetY - pointerSmoothY) * 0.06;
     }
 
-    // ── Interpolate scene state ──
-    var idx = Math.floor(stateProgress);
-    var frac = stateProgress - idx;
-    var s0 = SCENE_STATES[idx];
-    var s1 = SCENE_STATES[Math.min(idx + 1, SCENE_STATES.length - 1)];
+    // ── Composition Director: interpolate between shots ──
+    var idx = Math.floor(shotProgress);
+    var frac = smoothstep(shotProgress - idx); // eased transition
+    var s0 = SHOTS[idx];
+    var s1 = SHOTS[Math.min(idx + 1, SHOTS.length - 1)];
 
-    // Camera interpolation
+    // Camera direction — moves around the cube (cube stays at origin)
     camera.position.x = lerp(s0.camera.x, s1.camera.x, frac);
     camera.position.y = lerp(s0.camera.y, s1.camera.y, frac);
     camera.position.z = lerp(s0.camera.z, s1.camera.z, frac);
@@ -992,22 +1005,27 @@ import * as THREE from './vendor/three.module.min.js';
       lerp(s0.camera.lookZ, s1.camera.lookZ, frac)
     );
 
-    // ── Cube (GPU-only, locked rotation; position/scale from state) ──
+    // ── Cube: stationary at origin, rotation only, visibility from shot ──
     uTime.value = timeSeconds;
     if (cubeGroup) {
       if (!reduceMotion) {
         cubeGroup.rotation.y = CUBE_INIT_ROT_Y + time * CUBE_ROT_Y;
         cubeGroup.rotation.x = CUBE_INIT_ROT_X + Math.sin(time * CUBE_DRIFT_X_FREQ) * CUBE_DRIFT_X_AMP;
       }
+      // Entrance scale only — no shot-based scale (camera distance creates size variation)
       var entranceScale = 0.92 + entranceProgress * 0.08;
-      var stateScale = lerp(s0.cube.scale, s1.cube.scale, frac);
-      cubeGroup.scale.setScalar(entranceScale * stateScale);
-      cubeGroup.position.x = lerp(s0.cube.posX, s1.cube.posX, frac);
-      cubeGroup.position.y = lerp(s0.cube.posY, s1.cube.posY, frac);
-      cubeGroup.position.z = lerp(s0.cube.posZ, s1.cube.posZ, frac);
+      cubeGroup.scale.setScalar(entranceScale);
+      // Cube stays at world origin — never moves
+      cubeGroup.position.set(0, 0, 0);
     }
 
-    // ── Field & Dust (GPU-only, opacity from state) ──
+    // ── Cube visibility from shot ──
+    var cubeVisibility = lerp(s0.cubeVisibility, s1.cubeVisibility, frac);
+    for (var c = 0; c < cubeOpacityRefs.length; c++) {
+      cubeOpacityRefs[c].uniform.value = cubeOpacityRefs[c].base * cubeVisibility;
+    }
+
+    // ── Field & Dust opacity from shot ──
     var fieldOpacity = lerp(s0.fieldOpacity, s1.fieldOpacity, frac);
     var dustOpacity = lerp(s0.dustOpacity, s1.dustOpacity, frac);
     var scrollDispersion = lerp(s0.scrollDispersion, s1.scrollDispersion, frac);
