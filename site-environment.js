@@ -49,7 +49,7 @@ import * as THREE from './vendor/three.module.min.js';
   inclX: -18 * Math.PI / 180,
   inclY: 13 * Math.PI / 180,
   inclZ: -10 * Math.PI / 180,
-  baseSpeed: 2 * Math.PI / 45,
+  baseSpeed: 2 * Math.PI / 120,
   opacity: 1,                     // БЫЛО 0.92 → ПЛОТНЕЕ
   highlightOpacity: 0.65,
   highlightFraction: 0.06
@@ -65,16 +65,16 @@ import * as THREE from './vendor/three.module.min.js';
   inclX: 5 * Math.PI / 180,
   inclY: -8 * Math.PI / 180,
   inclZ: 18 * Math.PI / 180,
-  baseSpeed: 2 * Math.PI / 60,
+  baseSpeed: 2 * Math.PI / 150,
   opacity: 0.9,
   highlightOpacity: 0.55,
   highlightFraction: 0.07
 };
 
   var FIELD_COUNTS = {
-  desktop: { primary: 32000, secondary: 16000, dust: 600 },
-  tablet:  { primary: 20000, secondary: 10000, dust: 300 },
-  mobile:  { primary: 12000, secondary: 6000,  dust: 150 }
+  desktop: { primary: 16000, secondary: 700, dust: 300 },
+  tablet:  { primary: 10000, secondary: 4000, dust: 120 },
+  mobile:  { primary: 6000, secondary: 2500,  dust: 60 }
 };
 
   // ─── Colors ───────────────────────────────────────────────
@@ -513,7 +513,7 @@ var FLOW_C = {
   fragmentRadius: [0.38, 0.42, 0.45, 0.42, 0.38, 0.42, 0.45, 0.42, 0.38],
   dustRadius: [0.58, 0.62, 0.65, 0.62, 0.58, 0.62, 0.65, 0.62, 0.58],
   textureStreaks: [1.2, 1.0, 1.3, 1.1, 1.2, 1.0, 1.3, 1.1, 1.2],
-  speedCoherence: 0.012,
+  speedCoherence: 0.005,
   weight: 0.70
 };
 
@@ -529,7 +529,7 @@ var FLOW_C = {
   fragmentRadius: [0.28, 0.30, 0.32, 0.30, 0.28, 0.30, 0.32, 0.30, 0.28],
   dustRadius: [0.42, 0.45, 0.48, 0.45, 0.42, 0.45, 0.48, 0.45, 0.42],
   textureStreaks: [1.0, 0.9, 1.1, 1.0, 1.0, 0.9, 1.1, 1.0, 1.0],
-  speedCoherence: 0.018,
+  speedCoherence: 0.008,
   weight: 0.25
 };
 
@@ -545,7 +545,7 @@ var FLOW_C = {
   fragmentRadius: [0.18, 0.20, 0.22, 0.20, 0.18, 0.20, 0.22, 0.20, 0.18],
   dustRadius: [0.28, 0.30, 0.32, 0.30, 0.28, 0.30, 0.32, 0.30, 0.28],
   textureStreaks: [0.9, 0.8, 1.0, 0.9, 0.9, 0.8, 1.0, 0.9, 0.9],
-  speedCoherence: 0.020,
+  speedCoherence: 0.010,
   weight: 0.05
 };
 
@@ -1152,11 +1152,11 @@ var FLOW_C = {
     "  }",
     // Density modulation — fluid-like, not symmetric
     "  float densityShift = flowTime * 0.08;",
-    "  float densityMod = 0.50",
+    "  float densityMod = 0.65",
     "    + 0.30 * sin(theta * 1.5 + aSeed * 3.0 + densityShift)",
     "    + 0.18 * cos(theta * 2.7 + aSeed * 5.0 + densityShift * 0.7);",
     // Breathing — slow density oscillation
-    "  float breath = sin(flowTime * 0.3 + aPhase) * 0.06;",
+    "  float breath = sin(flowTime * 0.3 + aPhase) * 0.03;",
     "  densityMod += breath;",
     "  densityMod = max(0.2, densityMod);",
     // Border dissolve — particles at river edges fade naturally
@@ -1706,7 +1706,7 @@ var FLOW_C = {
   // Diffuse lighting does not bloom. Dust never blooms.
 
   var post = {};
-  var BLOOM_THRESHOLD = 0.72;
+  var BLOOM_THRESHOLD = 0.65;
   var BLOOM_RADIUS = 0.008;
   var BLOOM_INTENSITY = 0.38;
   var BLOOM_PASSES = 4;
