@@ -165,6 +165,8 @@ import * as THREE from './vendor/three.module.min.js';
   var uLightDebug = { value: 0 };    // 1.0 = grayscale lighting debug
   var uMaterialDebug = { value: 0 }; // 1.0 = material color debug
   var uEmissionDebug = { value: 0 }; // 1.0 = emission-only debug
+  var uCubeDepthDebug = { value: 0 };    // 1.0 = cube depth debug
+  var uCubeMaterialDebug = { value: 0 }; // 1.0 = cube material isolation
 
   // ─── Helpers ──────────────────────────────────────────────
   function getDevice() {
@@ -663,9 +665,9 @@ import * as THREE from './vendor/three.module.min.js';
     "  out float diffuse, out float emission, out float sizeMul,",
     "  out float saturation, out float softness) {",
     "  if (matId < 0.5) {",
-    "    diffuse = light * 1.5;",
-    "    emission = 0.90 + light * 0.40;",
-    "    sizeMul = 1.3;  saturation = 0.8;  softness = 0.0;",
+    "    diffuse = light * 1.2;",
+    "    emission = 0.85 + light * 0.35;",
+    "    sizeMul = 0.9;  saturation = 0.8;  softness = 0.15;",
     "  } else if (matId < 1.5) {",
     "    float resp = mix(0.4, 1.2, widthFactor);",
     "    diffuse = light * resp + 0.05;",
@@ -681,13 +683,13 @@ import * as THREE from './vendor/three.module.min.js';
     "    emission = light * 0.03;",
     "    sizeMul = 0.5;  saturation = 0.5;  softness = 0.12;",
     "  } else if (matId < 4.5) {",
-    "    diffuse = light * 1.2;",
-    "    emission = 0.10 + light * 0.20;",
-    "    sizeMul = 1.0;  saturation = 1.0;  softness = 0.08;",
+    "    diffuse = light * 1.0;",
+    "    emission = light * 0.04;",
+    "    sizeMul = 0.78;  saturation = 0.9;  softness = 0.10;",
     "  } else if (matId < 5.5) {",
-    "    diffuse = light * 0.5 + 0.03;",
-    "    emission = 0.03 + light * 0.09;",
-    "    sizeMul = 0.7;  saturation = 0.6;  softness = 0.15;",
+    "    diffuse = light * 0.35;",
+    "    emission = light * 0.02;",
+    "    sizeMul = 0.55;  saturation = 0.45;  softness = 0.25;",
     "  } else {",
     "    diffuse = light * 1.3;",
     "    emission = 0.75 + light * 0.45;",
@@ -709,7 +711,7 @@ import * as THREE from './vendor/three.module.min.js';
     "}"
   ].join("\n");
 
-  // ─── Cube Shaders (LOCKED — unchanged from V1) ────────────
+  // ─── Cube Shaders ──────────────────────────────────────────
   var cubeVertexShader = [
     glslMaterialResponse,
     "attribute float size;",
@@ -727,6 +729,8 @@ import * as THREE from './vendor/three.module.min.js';
     "varying float vSaturation;",
     "varying float vSoftness;",
     "varying float vMaterialId;",
+    "varying float vDepth;",
+    "varying float vOpacity;",
     "void main() {",
     "  vColor = colorMix;",
     "  vMaterialId = surfaceType;",
@@ -737,13 +741,37 @@ import * as THREE from './vendor/three.module.min.js';
     "  vec3 transformed = position + dir * shimmer;",
     "  vec4 mvPosition = modelViewMatrix * vec4(transformed, 1.0);",
     "  float depth = -mvPosition.z;",
-    "  float depthFactor = smoothstep(3.5, 6.5, depth + depthBias);",
-    "  float sizeScale = 1.0 - depthFactor * 0.35;",
-    "  gl_PointSize = max(1.0, size * uScale * sizeScale * matSize / depth);",
-    "  vDiffuse = matDiffuse * (1.0 - depthFactor * 0.30);",
-    "  vEmission = matEmission * (1.0 - depthFactor * 0.15);",
-    "  vSaturation = matSat;",
-    "  vSoftness = matSoft;",
+    // Relative depth: 0=front, 1=rear — smooth continuous falloff
+    "  float relDepth = smoothstep(3.8, 6.2, depth + depthBias);",
+    "  vDepth = relDepth;",
+    // Deterministic per-particle variation (stable, no flicker)
+    "  float sizeVar = 1.0 + sin(phase * 1.732) * 0.08;",
+    "  float opacityVar = 1.0 + sin(phase * 2.137) * 0.06;",
+    "  float softnessVar = 1.0 + sin(phase * 1.593) * 0.05;",
+    // Depth attenuation — front larger/sharper, rear smaller/softer
+    "  float sizeScale = mix(1.0, 0.55, relDepth);",
+    "  gl_PointSize = max(1.0, size * uScale * sizeScale * matSize * sizeVar / depth);",
+    // Diffuse: front full, rear reduced
+    "  vDiffuse = matDiffuse * mix(1.0, 0.35, relDepth);",
+    // Emission: gentle depth falloff (core visible through structure)
+    "  vEmission = matEmission * mix(1.0, 0.55, relDepth);",
+    // Saturation: front full, rear desaturated
+    "  vSaturation = matSat * mix(1.0, 0.5, relDepth);",
+    // Softness: rear particles softer
+    "  vSoftness = clamp(matSoft * softnessVar * mix(1.0, 1.6, relDepth), 0.0, 0.9);",
+    // Material-aware opacity
+    "  float matOpacity;",
+    "  if (surfaceType < 0.5) {",
+    "    matOpacity = 0.35 + brightness * 0.25;",
+    "  } else if (surfaceType < 4.5) {",
+    "    matOpacity = 0.80;",
+    "  } else if (surfaceType < 5.5) {",
+    "    matOpacity = 0.38;",
+    "  } else {",
+    "    matOpacity = 1.0;",
+    "  }",
+    // Depth attenuates opacity — rear fades but doesn't disappear
+    "  vOpacity = matOpacity * opacityVar * mix(1.0, 0.45, relDepth);",
     "  gl_Position = projectionMatrix * mvPosition;",
     "}"
   ].join("\n");
@@ -756,10 +784,24 @@ import * as THREE from './vendor/three.module.min.js';
     "varying float vSaturation;",
     "varying float vSoftness;",
     "varying float vMaterialId;",
+    "varying float vDepth;",
+    "varying float vOpacity;",
     "uniform float uOpacity;",
     "uniform float uLightDebug;",
     "uniform float uMaterialDebug;",
     "uniform float uEmissionDebug;",
+    "uniform float uCubeDepthDebug;",
+    "uniform float uCubeMaterialDebug;",
+    "vec3 cubeDepthColor(float d) {",
+    "  if (d < 0.5) return mix(vec3(1.0, 0.85, 0.6), vec3(0.4, 0.9, 0.5), d * 2.0);",
+    "  return mix(vec3(0.4, 0.9, 0.5), vec3(0.25, 0.35, 0.7), (d - 0.5) * 2.0);",
+    "}",
+    "vec3 cubeMaterialColor(float matId) {",
+    "  if (matId < 0.5) return vec3(1.0, 0.3, 0.3);",
+    "  else if (matId < 4.5) return vec3(0.9, 0.8, 0.2);",
+    "  else if (matId < 5.5) return vec3(0.3, 0.8, 0.9);",
+    "  else return vec3(0.9, 0.3, 0.8);",
+    "}",
     "void main() {",
     "  vec2 coord = gl_PointCoord - vec2(0.5);",
     "  float dist = length(coord);",
@@ -770,13 +812,17 @@ import * as THREE from './vendor/three.module.min.js';
     "    gl_FragColor = vec4(materialDebugColor(vMaterialId), alpha);",
     "  } else if (uLightDebug > 0.5) {",
     "    gl_FragColor = vec4(vec3(vDiffuse), alpha);",
+    "  } else if (uCubeMaterialDebug > 0.5) {",
+    "    gl_FragColor = vec4(cubeMaterialColor(vMaterialId), alpha);",
+    "  } else if (uCubeDepthDebug > 0.5) {",
+    "    gl_FragColor = vec4(cubeDepthColor(vDepth), alpha);",
     "  } else if (uEmissionDebug > 0.5) {",
     "    gl_FragColor = vec4(vec3(vEmission), alpha);",
     "  } else {",
     "    vec3 satColor = mix(vec3(dot(vColor, vec3(0.299, 0.587, 0.114))), vColor, vSaturation);",
     "    vec3 diffuseColor = satColor * vDiffuse;",
     "    vec3 emissiveColor = mix(vColor, vec3(0.7, 0.95, 0.8), 0.5) * vEmission;",
-    "    gl_FragColor = vec4(diffuseColor + emissiveColor, alpha * uOpacity);",
+    "    gl_FragColor = vec4(diffuseColor + emissiveColor, alpha * vOpacity * uOpacity);",
     "  }",
     "}"
   ].join("\n");
@@ -789,10 +835,24 @@ import * as THREE from './vendor/three.module.min.js';
     "varying float vSaturation;",
     "varying float vSoftness;",
     "varying float vMaterialId;",
+    "varying float vDepth;",
+    "varying float vOpacity;",
     "uniform float uOpacity;",
     "uniform float uLightDebug;",
     "uniform float uMaterialDebug;",
     "uniform float uEmissionDebug;",
+    "uniform float uCubeDepthDebug;",
+    "uniform float uCubeMaterialDebug;",
+    "vec3 cubeDepthColor(float d) {",
+    "  if (d < 0.5) return mix(vec3(1.0, 0.85, 0.6), vec3(0.4, 0.9, 0.5), d * 2.0);",
+    "  return mix(vec3(0.4, 0.9, 0.5), vec3(0.25, 0.35, 0.7), (d - 0.5) * 2.0);",
+    "}",
+    "vec3 cubeMaterialColor(float matId) {",
+    "  if (matId < 0.5) return vec3(1.0, 0.3, 0.3);",
+    "  else if (matId < 4.5) return vec3(0.9, 0.8, 0.2);",
+    "  else if (matId < 5.5) return vec3(0.3, 0.8, 0.9);",
+    "  else return vec3(0.9, 0.3, 0.8);",
+    "}",
     "void main() {",
     "  vec2 coord = gl_PointCoord - vec2(0.5);",
     "  float dist = length(coord);",
@@ -803,13 +863,17 @@ import * as THREE from './vendor/three.module.min.js';
     "    gl_FragColor = vec4(materialDebugColor(vMaterialId), alpha);",
     "  } else if (uLightDebug > 0.5) {",
     "    gl_FragColor = vec4(vec3(vDiffuse), alpha);",
+    "  } else if (uCubeMaterialDebug > 0.5) {",
+    "    gl_FragColor = vec4(cubeMaterialColor(vMaterialId), alpha);",
+    "  } else if (uCubeDepthDebug > 0.5) {",
+    "    gl_FragColor = vec4(cubeDepthColor(vDepth), alpha);",
     "  } else if (uEmissionDebug > 0.5) {",
     "    gl_FragColor = vec4(vec3(vEmission), alpha);",
     "  } else {",
     "    vec3 satColor = mix(vec3(dot(vColor, vec3(0.299, 0.587, 0.114))), vColor, vSaturation);",
     "    vec3 diffuseColor = satColor * vDiffuse;",
     "    vec3 emissiveColor = mix(vColor, vec3(0.8, 0.98, 0.9), 0.6) * vEmission;",
-    "    gl_FragColor = vec4(diffuseColor + emissiveColor, alpha * uOpacity);",
+    "    gl_FragColor = vec4(diffuseColor + emissiveColor, alpha * vOpacity * uOpacity);",
     "  }",
     "}"
   ].join("\n");
@@ -913,7 +977,7 @@ import * as THREE from './vendor/three.module.min.js';
       r: c[0], g: c[1], b: c[2],
       size: 0.8 + Math.random() * 1.2,
       light: eLight,
-      materialId: MAT.CUBE_SURFACE,
+      materialId: MAT.ENERGY_ACCENT,
       phase: Math.random() * Math.PI * 2,
       depthBias: (Math.random() - 0.5) * 0.4
     };
@@ -1000,7 +1064,8 @@ import * as THREE from './vendor/three.module.min.js';
         uTime: uTime, uScale: uScaleGlobal,
         uOpacity: { value: 0.92 }, uReduceMotion: uReduceMotion,
         uLightDebug: uLightDebug, uMaterialDebug: uMaterialDebug,
-        uEmissionDebug: uEmissionDebug
+        uEmissionDebug: uEmissionDebug,
+        uCubeDepthDebug: uCubeDepthDebug, uCubeMaterialDebug: uCubeMaterialDebug
       },
       vertexShader: cubeVertexShader,
       fragmentShader: cubeFragmentShader,
@@ -1023,7 +1088,8 @@ import * as THREE from './vendor/three.module.min.js';
         uTime: uTime, uScale: uScaleGlobal,
         uOpacity: { value: 0.40 }, uReduceMotion: uReduceMotion,
         uLightDebug: uLightDebug, uMaterialDebug: uMaterialDebug,
-        uEmissionDebug: uEmissionDebug
+        uEmissionDebug: uEmissionDebug,
+        uCubeDepthDebug: uCubeDepthDebug, uCubeMaterialDebug: uCubeMaterialDebug
       },
       vertexShader: cubeVertexShader,
       fragmentShader: cubeHighlightFragmentShader,
@@ -1999,11 +2065,18 @@ import * as THREE from './vendor/three.module.min.js';
     if (!animating) return;
     rafId = requestAnimationFrame(animate);
 
-    // Debug modes — precedence: material > light > emission > normal
+    // Debug modes — precedence: global material > global light > cube material > cube depth > emission > normal
     uLightDebug.value = window.__lightDebug ? 1.0 : 0.0;
     uMaterialDebug.value = window.__materialDebug ? 1.0 : 0.0;
     uEmissionDebug.value = window.__emissionDebug ? 1.0 : 0.0;
+    uCubeDepthDebug.value = window.__cubeDepthDebug ? 1.0 : 0.0;
+    uCubeMaterialDebug.value = window.__cubeMaterialDebug ? 1.0 : 0.0;
+    var cubeDebugActive = (window.__cubeDepthDebug || window.__cubeMaterialDebug) ? true : false;
     if (cubeGroup) cubeGroup.visible = !window.__lightDebug;
+    // Hide field/dust during cube debug for isolated inspection
+    for (var fi = 0; fi < fieldObjects.length; fi++) {
+      fieldObjects[fi].visible = !cubeDebugActive;
+    }
 
     var dt = lastTime ? Math.min(time - lastTime, 33) : 16;
     lastTime = time;
