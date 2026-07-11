@@ -864,17 +864,40 @@ import * as THREE from './vendor/three.module.min.js';
     var radiusRange = config.radiusMax - config.radiusMin;
     var bRatio = config.radiusBRatio;
 
-    // Flow-based particle generation:
+    // Depth layer assignment:
+    // Layer 1 — Foreground: 3% — large, soft, close to camera
+    // Layer 2 — Main Energy: 60% — dominant visual layer
+    // Layer 3 — Background Flow: 30% — smaller, lower contrast, behind
+    // Layer 4 — Atmospheric Dust: 7% — tiny, very low opacity, far back
+    var DEPTH_LAYERS = [
+      { id: 1, fraction: 0.03, thickBase: -2.0, thickRange: 0.8, sizeMul: 1.8, brightMul: 1.15, opacityMul: 0.70 },
+      { id: 2, fraction: 0.60, thickBase: 0.0,  thickRange: 0.3, sizeMul: 1.0, brightMul: 1.0,  opacityMul: 1.0 },
+      { id: 3, fraction: 0.30, thickBase: 2.0,  thickRange: 0.8, sizeMul: 0.55, brightMul: 0.65, opacityMul: 0.80 },
+      { id: 4, fraction: 0.07, thickBase: 4.0,  thickRange: 0.8, sizeMul: 0.25, brightMul: 0.35, opacityMul: 0.50 }
+    ];
+
+    function pickDepthLayer() {
+      var r = Math.random();
+      var cum = 0;
+      for (var i = 0; i < DEPTH_LAYERS.length; i++) {
+        cum += DEPTH_LAYERS[i].fraction;
+        if (r < cum) return DEPTH_LAYERS[i];
+      }
+      return DEPTH_LAYERS[1];
+    }
+
+    // Flow-based particle generation with depth layering:
     // 1. Pick a flow line (weighted)
     // 2. Sample position along flow centerline + subtle turbulence
     // 3. Map world position → stream coordinates (theta, radius) for shader
     // 4. Accept based on density field
-    // 5. Brightness/size from light field
-    // Particles form coherent streams, not scattered dots.
+    // 5. Assign depth layer → thickness offset, size scale, brightness scale
+    // 6. Brightness/size from light field × depth layer multiplier
     for (var i = 0; i < mainCount; i++) {
       var theta = 0, streamRadius = 0, density = 0, light = 0;
       var widthOff = 0, thickOff = 0, flowSpeed = 0;
       var accepted = false;
+      var layer = pickDepthLayer();
 
       for (var attempt = 0; attempt < 30; attempt++) {
         var flow = pickFlow();
@@ -886,9 +909,11 @@ import * as THREE from './vendor/three.module.min.js';
           theta = stream.theta;
           streamRadius = Math.max(config.radiusMin, Math.min(config.radiusMax, stream.radius));
 
-          // Tight offsets — particles hug the flow centerline
+          // Tight width offsets — particles hug the flow centerline
           widthOff = gaussian() * flow.flowWidth;
-          thickOff = gaussian() * flow.flowWidth * 0.5;
+
+          // Depth layer controls thickness offset (z-displacement via binormal)
+          thickOff = layer.thickBase + gaussian() * layer.thickRange;
 
           // Coherent speed — particles in same flow move together
           flowSpeed = config.baseSpeed * (1.0 - flow.speedCoherence * 0.5 + Math.random() * flow.speedCoherence);
@@ -904,7 +929,7 @@ import * as THREE from './vendor/three.module.min.js';
         theta = Math.random() * Math.PI * 2;
         streamRadius = config.radiusMin + Math.random() * radiusRange;
         widthOff = gaussian() * halfWidth * 0.65;
-        thickOff = gaussian() * halfThickness * 0.65;
+        thickOff = layer.thickBase + gaussian() * layer.thickRange;
         density = 0.05;
         light = 0.05;
         flowSpeed = config.baseSpeed * (0.96 + Math.random() * 0.08);
@@ -918,6 +943,10 @@ import * as THREE from './vendor/three.module.min.js';
       else if (tier === 1) { brightness = 0.25 + light * 0.30; sizeMul = 0.5; }
       else { brightness = 0.05 + light * 0.15; sizeMul = 0.3; }
 
+      // Apply depth layer multipliers
+      brightness *= layer.brightMul;
+      var finalSize = ((isPrimary ? 0.3 : 0.2) + density * (isPrimary ? 0.8 : 0.7) * sizeMul) * layer.sizeMul;
+
       particles.push({
         streamRadius: streamRadius,
         streamPos: theta / (Math.PI * 2),
@@ -926,8 +955,8 @@ import * as THREE from './vendor/three.module.min.js';
         thicknessOffset: thickOff,
         phase: Math.random() * Math.PI * 2,
         speed: flowSpeed,
-        size: (isPrimary ? 0.3 : 0.2) + density * (isPrimary ? 0.8 : 0.7) * sizeMul,
-        brightness: brightness,
+        size: finalSize,
+        brightness: Math.min(1.0, brightness),
         color: c,
         densityBias: density,
         isHighlight: false
@@ -935,10 +964,13 @@ import * as THREE from './vendor/three.module.min.js';
     }
 
     // Highlights — exist because LIGHT exists along FLOW lines
+    // Highlights only on Layer 2 (main) and Layer 1 (foreground)
     for (var j = 0; j < highlightCount; j++) {
       var hTheta = 0, hRadius = 0, hDensity = 0, hLight = 0;
       var hWidth = 0, hThick = 0, hSpeed = 0;
       var hAccepted = false;
+      // Foreground highlights 15%, main highlights 85%
+      var hLayer = Math.random() < 0.15 ? DEPTH_LAYERS[0] : DEPTH_LAYERS[1];
 
       for (var attempt = 0; attempt < 50; attempt++) {
         var hFlow = pickFlow();
@@ -952,7 +984,7 @@ import * as THREE from './vendor/three.module.min.js';
           hTheta = hStream.theta;
           hRadius = Math.max(config.radiusMin, Math.min(config.radiusMax, hStream.radius));
           hWidth = gaussian() * hFlow.flowWidth * 0.5;
-          hThick = gaussian() * hFlow.flowWidth * 0.3;
+          hThick = hLayer.thickBase + gaussian() * hLayer.thickRange * 0.5;
           hSpeed = config.baseSpeed * (1.0 - hFlow.speedCoherence * 0.5 + Math.random() * hFlow.speedCoherence);
           hAccepted = true;
           break;
@@ -970,8 +1002,8 @@ import * as THREE from './vendor/three.module.min.js';
         thicknessOffset: hThick,
         phase: Math.random() * Math.PI * 2,
         speed: hSpeed,
-        size: 0.6 + hLight * 0.7,
-        brightness: 0.80 + hLight * 0.20,
+        size: (0.6 + hLight * 0.7) * hLayer.sizeMul,
+        brightness: Math.min(1.0, (0.80 + hLight * 0.20) * hLayer.brightMul),
         color: cH,
         densityBias: hDensity,
         isHighlight: true
@@ -1092,7 +1124,7 @@ import * as THREE from './vendor/three.module.min.js';
     var ph = new Float32Array(count);
     var br = new Float32Array(count);
 
-    // Dust uses same density field + light field for brightness
+    // Dust uses same density field + light field — pushed to far depth (Layer 4)
     for (var i = 0; i < count; i++) {
       var x, y, zOff, density = 0, light = 0;
       var accepted = false;
@@ -1100,10 +1132,11 @@ import * as THREE from './vendor/three.module.min.js';
       for (var attempt = 0; attempt < 20; attempt++) {
         x = (Math.random() - 0.5) * 8.0;
         y = (Math.random() - 0.5) * 5.0;
-        zOff = (Math.random() - 0.5) * 1.5;
-        density = totalDensityAt(x, y, zOff);
+        // Push dust to far background z
+        zOff = 3.5 + Math.random() * 2.5;
+        density = totalDensityAt(x, y, 0);
         if (Math.random() < density * 0.5 + 0.05) {
-          light = lightFieldAt(x, y, zOff);
+          light = lightFieldAt(x, y, 0);
           accepted = true;
           break;
         }
@@ -1114,9 +1147,9 @@ import * as THREE from './vendor/three.module.min.js';
         var theta = Math.random() * Math.PI * 2;
         x = r * Math.cos(theta);
         y = r * 0.5 * Math.sin(theta);
-        zOff = (Math.random() - 0.5) * 1.5;
+        zOff = 3.5 + Math.random() * 2.5;
         density = 0.05;
-        light = lightFieldAt(x, y, zOff);
+        light = lightFieldAt(x, y, 0);
       }
 
       pos[i * 3] = x;
@@ -1126,9 +1159,9 @@ import * as THREE from './vendor/three.module.min.js';
       var colorRoll = Math.random();
       var color = colorRoll < 0.65 ? COLOR_NAVY : (colorRoll < 0.90 ? COLOR_GREEN : COLOR_PALE_GREEN);
       col[i * 3] = color[0]; col[i * 3 + 1] = color[1]; col[i * 3 + 2] = color[2];
-      sz[i] = 0.10 + light * 0.15;
+      sz[i] = 0.08 + light * 0.10;
       ph[i] = Math.random() * Math.PI * 2;
-      br[i] = 0.05 + light * 0.15;
+      br[i] = 0.03 + light * 0.10;
     }
 
     var geo = new THREE.BufferGeometry();
