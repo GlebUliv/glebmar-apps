@@ -30,9 +30,9 @@ import * as THREE from './vendor/three.module.min.js';
   var CORE_RADIUS = CUBE_HALF * 0.22;
 
   var CUBE_COUNTS = {
-    desktop: { surface: 10200, edges: 3060, internal: 2620, core: 700 },
-    tablet:  { surface: 5700,  edges: 1710, internal: 1460, core: 350  },
-    mobile:  { surface: 3150,  edges: 945,  internal: 810,  core: 175  }
+    desktop: { surface: 2200, edges: 560, internal: 2620, core: 700 },
+    tablet:  { surface: 2200,  edges: 560, internal: 1460, core: 350  },
+    mobile:  { surface: 1200,  edges: 360,  internal: 810,  core: 175  }
   };
 
   // ─── Field Config ─────────────────────────────────────────
