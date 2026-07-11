@@ -163,6 +163,7 @@ import * as THREE from './vendor/three.module.min.js';
   var uScrollProgress = { value: 0 };
   var uEntranceProgress = { value: 0 };
   var uLightDebug = { value: 0 };    // 1.0 = grayscale lighting debug
+  var uMaterialDebug = { value: 0 }; // 1.0 = material color debug
 
   // ─── Helpers ──────────────────────────────────────────────
   function getDevice() {
@@ -259,6 +260,69 @@ import * as THREE from './vendor/three.module.min.js';
     }
     return Math.min(1.0, d);
   }
+
+  // ─── Material System — Material Response Engine ──────────
+  // Every particle belongs to exactly one material.
+  // Materials define rendering behavior — not geometry.
+  // The generator assigns only: position, materialId, flow, layer, seed.
+  // Brightness is a rendering result, not a particle property.
+  //
+  // Material 0 — Energy Core:      cube core, strong emission
+  // Material 1 — Energy Stream:    ribbon flow, center vs edge
+  // Material 2 — Transition:       sparse/fragmented field
+  // Material 3 — Atmospheric Dust: far background, very weak
+  // Material 4 — Cube Surface:     sharp, clear, rim-responsive
+  // Material 5 — Cube Internal:    soft, calm, muted
+  // Material 6 — Energy Accent:    highlights, strong + emissive
+
+  var MAT = {
+    ENERGY_CORE:      0,
+    ENERGY_STREAM:    1,
+    TRANSITION:       2,
+    ATMOSPHERIC_DUST: 3,
+    CUBE_SURFACE:     4,
+    CUBE_INTERNAL:    5,
+    ENERGY_ACCENT:    6
+  };
+
+  // Material parameters — used by shader for response computation
+  // lightResponse:  how strongly light affects brightness
+  // emissionWeight:  base emission independent of light
+  // rimResponse:     how strongly rim light contributes
+  // saturation:      color saturation multiplier
+  // sizeResponse:    size multiplier
+  // softness:         alpha edge softness (0=hard, 1=very soft)
+  // baseOpacity:      material base opacity
+  var MATERIAL_PARAMS = [
+    { // 0 — Energy Core
+      lightResponse: 1.5,  emissionWeight: 0.25, rimResponse: 0.0,
+      saturation: 0.8,  sizeResponse: 1.3,  softness: 0.0,  baseOpacity: 0.40
+    },
+    { // 1 — Energy Stream
+      lightResponse: 1.0,  emissionWeight: 0.05, rimResponse: 0.0,
+      saturation: 1.0,  sizeResponse: 1.0,  softness: 0.10, baseOpacity: 0.85
+    },
+    { // 2 — Transition
+      lightResponse: 0.6,  emissionWeight: 0.0,  rimResponse: 0.0,
+      saturation: 0.7,  sizeResponse: 0.6,  softness: 0.15, baseOpacity: 0.60
+    },
+    { // 3 — Atmospheric Dust
+      lightResponse: 0.2,  emissionWeight: 0.0,  rimResponse: 0.0,
+      saturation: 0.5,  sizeResponse: 0.5,  softness: 0.12, baseOpacity: 0.50
+    },
+    { // 4 — Cube Surface
+      lightResponse: 1.2,  emissionWeight: 0.0,  rimResponse: 1.0,
+      saturation: 1.0,  sizeResponse: 1.0,  softness: 0.08, baseOpacity: 0.92
+    },
+    { // 5 — Cube Internal
+      lightResponse: 0.5,  emissionWeight: 0.03, rimResponse: 0.0,
+      saturation: 0.6,  sizeResponse: 0.7,  softness: 0.15, baseOpacity: 0.80
+    },
+    { // 6 — Energy Accent
+      lightResponse: 1.3,  emissionWeight: 0.15, rimResponse: 0.0,
+      saturation: 0.9,  sizeResponse: 1.1,  softness: 0.0,  baseOpacity: 0.70
+    }
+  ];
 
   // ─── Light Field — Physical Lighting Engine ──────────────
   // Four-layer lighting system: Key, Fill, Rim, Ambient.
@@ -592,8 +656,53 @@ import * as THREE from './vendor/three.module.min.js';
     };
   }
 
+  // ─── GLSL Material Functions (shared by all shaders) ──────
+  var glslMaterialResponse = [
+    "void materialResponse(float matId, float light, float widthFactor,",
+    "  out float brightness, out float sizeMul, out float saturation, out float softness) {",
+    "  if (matId < 0.5) {",
+    "    brightness = light * 1.5 + 0.25;",
+    "    sizeMul = 1.3;  saturation = 0.8;  softness = 0.0;",
+    "  } else if (matId < 1.5) {",
+    "    float resp = mix(0.4, 1.2, widthFactor);",
+    "    brightness = light * resp + 0.05;",
+    "    sizeMul = mix(0.7, 1.2, widthFactor);",
+    "    saturation = 1.0;  softness = 0.10;",
+    "  } else if (matId < 2.5) {",
+    "    brightness = light * 0.6;",
+    "    sizeMul = 0.6;  saturation = 0.7;  softness = 0.15;",
+    "  } else if (matId < 3.5) {",
+    "    brightness = light * 0.2;",
+    "    sizeMul = 0.5;  saturation = 0.5;  softness = 0.12;",
+    "  } else if (matId < 4.5) {",
+    "    brightness = light * 1.2;",
+    "    sizeMul = 1.0;  saturation = 1.0;  softness = 0.08;",
+    "  } else if (matId < 5.5) {",
+    "    brightness = light * 0.5 + 0.03;",
+    "    sizeMul = 0.7;  saturation = 0.6;  softness = 0.15;",
+    "  } else {",
+    "    brightness = light * 1.3 + 0.15;",
+    "    sizeMul = 1.1;  saturation = 0.9;  softness = 0.0;",
+    "  }",
+    "  brightness = clamp(brightness, 0.0, 1.0);",
+    "}"
+  ].join("\n");
+
+  var glslMaterialDebugColor = [
+    "vec3 materialDebugColor(float matId) {",
+    "  if (matId < 0.5) return vec3(1.0, 0.0, 0.0);",
+    "  else if (matId < 1.5) return vec3(0.0, 1.0, 0.0);",
+    "  else if (matId < 2.5) return vec3(0.0, 0.0, 1.0);",
+    "  else if (matId < 3.5) return vec3(1.0, 1.0, 1.0);",
+    "  else if (matId < 4.5) return vec3(1.0, 1.0, 0.0);",
+    "  else if (matId < 5.5) return vec3(0.0, 1.0, 1.0);",
+    "  else return vec3(1.0, 0.0, 1.0);",
+    "}"
+  ].join("\n");
+
   // ─── Cube Shaders (LOCKED — unchanged from V1) ────────────
   var cubeVertexShader = [
+    glslMaterialResponse,
     "attribute float size;",
     "attribute float brightness;",
     "attribute float phase;",
@@ -605,8 +714,14 @@ import * as THREE from './vendor/three.module.min.js';
     "uniform float uReduceMotion;",
     "varying vec3 vColor;",
     "varying float vBrightness;",
+    "varying float vSaturation;",
+    "varying float vSoftness;",
+    "varying float vMaterialId;",
     "void main() {",
     "  vColor = colorMix;",
+    "  vMaterialId = surfaceType;",
+    "  float matBright, matSize, matSat, matSoft;",
+    "  materialResponse(surfaceType, brightness, 1.0, matBright, matSize, matSat, matSoft);",
     "  float shimmer = uReduceMotion > 0.5 ? 0.0 : sin(uTime * 0.20 + phase) * 0.0025;",
     "  vec3 dir = normalize(position + vec3(0.001, 0.001, 0.001));",
     "  vec3 transformed = position + dir * shimmer;",
@@ -614,44 +729,64 @@ import * as THREE from './vendor/three.module.min.js';
     "  float depth = -mvPosition.z;",
     "  float depthFactor = smoothstep(3.5, 6.5, depth + depthBias);",
     "  float sizeScale = 1.0 - depthFactor * 0.35;",
-    "  gl_PointSize = max(1.0, size * uScale * sizeScale / depth);",
-    "  vBrightness = brightness * (1.0 - depthFactor * 0.30);",
+    "  gl_PointSize = max(1.0, size * uScale * sizeScale * matSize / depth);",
+    "  vBrightness = matBright * (1.0 - depthFactor * 0.30);",
+    "  vSaturation = matSat;",
+    "  vSoftness = matSoft;",
     "  gl_Position = projectionMatrix * mvPosition;",
     "}"
   ].join("\n");
 
   var cubeFragmentShader = [
+    glslMaterialDebugColor,
     "varying vec3 vColor;",
     "varying float vBrightness;",
+    "varying float vSaturation;",
+    "varying float vSoftness;",
+    "varying float vMaterialId;",
     "uniform float uOpacity;",
     "uniform float uLightDebug;",
+    "uniform float uMaterialDebug;",
     "void main() {",
     "  vec2 coord = gl_PointCoord - vec2(0.5);",
     "  float dist = length(coord);",
     "  if (dist > 0.5) discard;",
-    "  float alpha = smoothstep(0.5, 0.08, dist);",
-    "  if (uLightDebug > 0.5) {",
+    "  float edge = 0.5 - vSoftness * 0.42;",
+    "  float alpha = smoothstep(0.5, edge, dist);",
+    "  if (uMaterialDebug > 0.5) {",
+    "    gl_FragColor = vec4(materialDebugColor(vMaterialId), alpha);",
+    "  } else if (uLightDebug > 0.5) {",
     "    gl_FragColor = vec4(vec3(vBrightness), alpha);",
     "  } else {",
-    "    gl_FragColor = vec4(vColor * vBrightness, alpha * uOpacity);",
+    "    vec3 col = mix(vec3(dot(vColor, vec3(0.299, 0.587, 0.114))), vColor, vSaturation);",
+    "    gl_FragColor = vec4(col * vBrightness, alpha * uOpacity);",
     "  }",
     "}"
   ].join("\n");
 
   var cubeHighlightFragmentShader = [
+    glslMaterialDebugColor,
     "varying vec3 vColor;",
     "varying float vBrightness;",
+    "varying float vSaturation;",
+    "varying float vSoftness;",
+    "varying float vMaterialId;",
     "uniform float uOpacity;",
     "uniform float uLightDebug;",
+    "uniform float uMaterialDebug;",
     "void main() {",
     "  vec2 coord = gl_PointCoord - vec2(0.5);",
     "  float dist = length(coord);",
     "  if (dist > 0.5) discard;",
-    "  float alpha = smoothstep(0.5, 0.0, dist);",
-    "  if (uLightDebug > 0.5) {",
+    "  float edge = 0.5 - vSoftness * 0.5;",
+    "  float alpha = smoothstep(0.5, edge, dist);",
+    "  if (uMaterialDebug > 0.5) {",
+    "    gl_FragColor = vec4(materialDebugColor(vMaterialId), alpha);",
+    "  } else if (uLightDebug > 0.5) {",
     "    gl_FragColor = vec4(vec3(vBrightness), alpha);",
     "  } else {",
-    "    gl_FragColor = vec4(vColor * vBrightness * 1.3, alpha * uOpacity);",
+    "    vec3 col = mix(vec3(dot(vColor, vec3(0.299, 0.587, 0.114))), vColor, vSaturation);",
+    "    gl_FragColor = vec4(col * vBrightness * 1.3, alpha * uOpacity);",
     "  }",
     "}"
   ].join("\n");
@@ -712,9 +847,9 @@ import * as THREE from './vendor/three.module.min.js';
       x: x, y: y, z: z,
       r: c[0], g: c[1], b: c[2],
       size: 1.0 + Math.random() * 1.5,
-      brightness: Math.min(1.0, sLight * (0.85 + Math.random() * 0.15)),
+      light: sLight,
+      materialId: MAT.CUBE_SURFACE,
       phase: Math.random() * Math.PI * 2,
-      surfaceType: 0,
       depthBias: (Math.random() - 0.5) * 0.4
     };
   }
@@ -754,9 +889,9 @@ import * as THREE from './vendor/three.module.min.js';
       x: x, y: y, z: z,
       r: c[0], g: c[1], b: c[2],
       size: 0.8 + Math.random() * 1.2,
-      brightness: Math.min(1.0, eLight * (0.90 + Math.random() * 0.10)),
+      light: eLight,
+      materialId: MAT.CUBE_SURFACE,
       phase: Math.random() * Math.PI * 2,
-      surfaceType: 1,
       depthBias: (Math.random() - 0.5) * 0.4
     };
   }
@@ -772,9 +907,9 @@ import * as THREE from './vendor/three.module.min.js';
       x: x, y: y, z: z,
       r: c[0], g: c[1], b: c[2],
       size: 0.5 + Math.random() * 0.8,
-      brightness: Math.min(1.0, iLight * (0.80 + Math.random() * 0.20)),
+      light: iLight,
+      materialId: MAT.CUBE_INTERNAL,
       phase: Math.random() * Math.PI * 2,
-      surfaceType: 2,
       depthBias: (Math.random() - 0.5) * 0.4
     };
   }
@@ -791,9 +926,9 @@ import * as THREE from './vendor/three.module.min.js';
       x: x, y: y, z: z,
       r: c[0], g: c[1], b: c[2],
       size: 0.4 + Math.random() * 0.6,
-      brightness: Math.min(1.0, coreLight * (0.75 + centerFactor * 0.25)),
+      light: coreLight * (0.75 + centerFactor * 0.25),
+      materialId: MAT.ENERGY_CORE,
       phase: Math.random() * Math.PI * 2,
-      surfaceType: 3,
       depthBias: (Math.random() - 0.5) * 0.3
     };
   }
@@ -812,8 +947,8 @@ import * as THREE from './vendor/three.module.min.js';
       var p = particles[i];
       pos[i * 3] = p.x; pos[i * 3 + 1] = p.y; pos[i * 3 + 2] = p.z;
       col[i * 3] = p.r; col[i * 3 + 1] = p.g; col[i * 3 + 2] = p.b;
-      sz[i] = p.size; br[i] = p.brightness; ph[i] = p.phase;
-      st[i] = p.surfaceType; db[i] = p.depthBias;
+      sz[i] = p.size; br[i] = p.light; ph[i] = p.phase;
+      st[i] = p.materialId; db[i] = p.depthBias;
     }
     geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
     geo.setAttribute("colorMix", new THREE.BufferAttribute(col, 3));
@@ -841,7 +976,7 @@ import * as THREE from './vendor/three.module.min.js';
       uniforms: {
         uTime: uTime, uScale: uScaleGlobal,
         uOpacity: { value: 0.92 }, uReduceMotion: uReduceMotion,
-        uLightDebug: uLightDebug
+        uLightDebug: uLightDebug, uMaterialDebug: uMaterialDebug
       },
       vertexShader: cubeVertexShader,
       fragmentShader: cubeFragmentShader,
@@ -863,7 +998,7 @@ import * as THREE from './vendor/three.module.min.js';
       uniforms: {
         uTime: uTime, uScale: uScaleGlobal,
         uOpacity: { value: 0.40 }, uReduceMotion: uReduceMotion,
-        uLightDebug: uLightDebug
+        uLightDebug: uLightDebug, uMaterialDebug: uMaterialDebug
       },
       vertexShader: cubeVertexShader,
       fragmentShader: cubeHighlightFragmentShader,
@@ -885,6 +1020,7 @@ import * as THREE from './vendor/three.module.min.js';
   // The field breathes and shifts density over time.
   // The cube emerges through a gradual density gradient near center.
   var fieldVertexShader = [
+    glslMaterialResponse,
     "attribute float aStreamRadius;",
     "attribute float aStreamPos;",
     "attribute float aSeed;",
@@ -896,6 +1032,7 @@ import * as THREE from './vendor/three.module.min.js';
     "attribute float aBrightness;",
     "attribute vec3 aColorMix;",
     "attribute float aDensityBias;",
+    "attribute float aMaterialId;",
     "uniform float uTime;",
     "uniform float uPointScale;",
     "uniform float uReduceMotion;",
@@ -908,6 +1045,9 @@ import * as THREE from './vendor/three.module.min.js';
     "uniform mat3 uRotation;",
     "varying vec3 vColor;",
     "varying float vBrightness;",
+    "varying float vSaturation;",
+    "varying float vSoftness;",
+    "varying float vMaterialId;",
     "void main() {",
     "  float flowTime = uReduceMotion > 0.5 ? 0.0 : uTime;",
     "  float theta = aStreamPos * 6.283185 + flowTime * aSpeed;",
@@ -961,95 +1101,138 @@ import * as THREE from './vendor/three.module.min.js';
     "  float distToCenter = length(mvPosition.xy);",
     "  float clarityFactor = smoothstep(0.40, 1.1, distToCenter);",
     "  float frontWeight = smoothstep(-0.15, 0.35, zDiff);",
+    // Material response — material defines brightness/size/saturation/softness
+    "  float matBright, matSize, matSat, matSoft;",
+    "  materialResponse(aMaterialId, aBrightness, widthFactor, matBright, matSize, matSat, matSoft);",
     "  vColor = aColorMix;",
-    "  vBrightness = aBrightness * densityMod * widthFactor;",
+    "  vMaterialId = aMaterialId;",
+    "  vBrightness = matBright * densityMod * widthFactor;",
     "  vBrightness *= mix(1.0, mix(0.20, 1.0, clarityFactor), frontWeight);",
+    "  vSaturation = matSat;",
+    "  vSoftness = matSoft;",
     // Depth attenuation
     "  float depth = -mvPosition.z;",
     "  float depthFactor = smoothstep(3.0, 7.5, depth);",
-    "  gl_PointSize = max(1.0, aSize * uPointScale * (1.0 - depthFactor * 0.25) / depth);",
+    "  gl_PointSize = max(1.0, aSize * uPointScale * matSize * (1.0 - depthFactor * 0.25) / depth);",
     "  gl_Position = projectionMatrix * mvPosition;",
     "}"
   ].join("\n");
 
   var fieldFragmentShader = [
+    glslMaterialDebugColor,
     "varying vec3 vColor;",
     "varying float vBrightness;",
+    "varying float vSaturation;",
+    "varying float vSoftness;",
+    "varying float vMaterialId;",
     "uniform float uOpacity;",
     "uniform float uLightDebug;",
+    "uniform float uMaterialDebug;",
     "void main() {",
     "  vec2 coord = gl_PointCoord - vec2(0.5);",
     "  float dist = length(coord);",
     "  if (dist > 0.5) discard;",
-    "  float alpha = smoothstep(0.5, 0.10, dist);",
-    "  if (uLightDebug > 0.5) {",
+    "  float edge = 0.10 + vSoftness * 0.32;",
+    "  float alpha = smoothstep(0.5, edge, dist);",
+    "  if (uMaterialDebug > 0.5) {",
+    "    gl_FragColor = vec4(materialDebugColor(vMaterialId), alpha);",
+    "  } else if (uLightDebug > 0.5) {",
     "    gl_FragColor = vec4(vec3(vBrightness), alpha);",
     "  } else {",
-    "    gl_FragColor = vec4(vColor * vBrightness, alpha * uOpacity);",
+    "    vec3 col = mix(vec3(dot(vColor, vec3(0.299, 0.587, 0.114))), vColor, vSaturation);",
+    "    gl_FragColor = vec4(col * vBrightness, alpha * uOpacity);",
     "  }",
     "}"
   ].join("\n");
 
   var fieldHighlightFragmentShader = [
+    glslMaterialDebugColor,
     "varying vec3 vColor;",
     "varying float vBrightness;",
+    "varying float vSaturation;",
+    "varying float vSoftness;",
+    "varying float vMaterialId;",
     "uniform float uOpacity;",
     "uniform float uLightDebug;",
+    "uniform float uMaterialDebug;",
     "void main() {",
     "  vec2 coord = gl_PointCoord - vec2(0.5);",
     "  float dist = length(coord);",
     "  if (dist > 0.5) discard;",
-    "  float alpha = smoothstep(0.5, 0.0, dist);",
-    "  if (uLightDebug > 0.5) {",
+    "  float edge = vSoftness * 0.4;",
+    "  float alpha = smoothstep(0.5, edge, dist);",
+    "  if (uMaterialDebug > 0.5) {",
+    "    gl_FragColor = vec4(materialDebugColor(vMaterialId), alpha);",
+    "  } else if (uLightDebug > 0.5) {",
     "    gl_FragColor = vec4(vec3(vBrightness), alpha);",
     "  } else {",
-    "    gl_FragColor = vec4(vColor * vBrightness * 1.4, alpha * uOpacity);",
+    "    vec3 col = mix(vec3(dot(vColor, vec3(0.299, 0.587, 0.114))), vColor, vSaturation);",
+    "    gl_FragColor = vec4(col * vBrightness * 1.4, alpha * uOpacity);",
     "  }",
     "}"
   ].join("\n");
 
   // ─── Dust Shaders ─────────────────────────────────────────
   var dustVertexShader = [
+    glslMaterialResponse,
     "attribute float aSize;",
     "attribute vec3 aColorMix;",
     "attribute float aPhase;",
     "attribute float aBrightness;",
+    "attribute float aMaterialId;",
     "uniform float uTime;",
     "uniform float uPointScale;",
     "uniform float uReduceMotion;",
     "uniform float uEntrance;",
     "varying vec3 vColor;",
     "varying float vBrightness;",
+    "varying float vSaturation;",
+    "varying float vSoftness;",
+    "varying float vMaterialId;",
     "void main() {",
     "  vColor = aColorMix;",
+    "  vMaterialId = aMaterialId;",
+    "  float matBright, matSize, matSat, matSoft;",
+    "  materialResponse(aMaterialId, aBrightness, 1.0, matBright, matSize, matSat, matSoft);",
     "  float drift = uReduceMotion > 0.5 ? 0.0 : sin(uTime * 0.1 + aPhase) * 0.02;",
     "  vec3 pos = position;",
     "  pos.x += drift;",
     "  pos.y += cos(uTime * 0.08 + aPhase) * 0.02;",
     "  pos *= mix(0.75, 1.0, uEntrance);",
     "  vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);",
-    "  vBrightness = aBrightness;",
+    "  vBrightness = matBright;",
+    "  vSaturation = matSat;",
+    "  vSoftness = matSoft;",
     "  float depth = -mvPosition.z;",
     "  float depthFactor = smoothstep(3.0, 8.0, depth);",
-    "  gl_PointSize = max(1.0, aSize * uPointScale * (1.0 - depthFactor * 0.3) / depth);",
+    "  gl_PointSize = max(1.0, aSize * uPointScale * matSize * (1.0 - depthFactor * 0.3) / depth);",
     "  gl_Position = projectionMatrix * mvPosition;",
     "}"
   ].join("\n");
 
   var dustFragmentShader = [
+    glslMaterialDebugColor,
     "varying vec3 vColor;",
     "varying float vBrightness;",
+    "varying float vSaturation;",
+    "varying float vSoftness;",
+    "varying float vMaterialId;",
     "uniform float uOpacity;",
     "uniform float uLightDebug;",
+    "uniform float uMaterialDebug;",
     "void main() {",
     "  vec2 coord = gl_PointCoord - vec2(0.5);",
     "  float dist = length(coord);",
     "  if (dist > 0.5) discard;",
-    "  float alpha = smoothstep(0.5, 0.12, dist);",
-    "  if (uLightDebug > 0.5) {",
+    "  float edge = 0.12 + vSoftness * 0.30;",
+    "  float alpha = smoothstep(0.5, edge, dist);",
+    "  if (uMaterialDebug > 0.5) {",
+    "    gl_FragColor = vec4(materialDebugColor(vMaterialId), alpha);",
+    "  } else if (uLightDebug > 0.5) {",
     "    gl_FragColor = vec4(vec3(vBrightness), alpha);",
     "  } else {",
-    "    gl_FragColor = vec4(vColor * vBrightness, alpha * uOpacity);",
+    "    vec3 col = mix(vec3(dot(vColor, vec3(0.299, 0.587, 0.114))), vColor, vSaturation);",
+    "    gl_FragColor = vec4(col * vBrightness, alpha * uOpacity);",
     "  }",
     "}"
   ].join("\n");
@@ -1161,14 +1344,14 @@ import * as THREE from './vendor/three.module.min.js';
 
       var c = colorPicker();
       var tier = lightTier(light);
-      var brightness, sizeMul;
-      if (tier === 3) { brightness = 0.90 + light * 0.10; sizeMul = 1.0; }
-      else if (tier === 2) { brightness = 0.55 + light * 0.30; sizeMul = 0.75; }
-      else if (tier === 1) { brightness = 0.25 + light * 0.30; sizeMul = 0.5; }
-      else { brightness = 0.05 + light * 0.15; sizeMul = 0.3; }
+      var materialId;
+      var sizeMul;
+      if (tier === 3) { materialId = MAT.ENERGY_STREAM; sizeMul = 1.0; }
+      else if (tier === 2) { materialId = MAT.ENERGY_STREAM; sizeMul = 0.75; }
+      else if (tier === 1) { materialId = MAT.TRANSITION; sizeMul = 0.5; }
+      else { materialId = MAT.TRANSITION; sizeMul = 0.3; }
 
       // Apply depth layer multipliers
-      brightness *= layer.brightMul;
       var finalSize = ((isPrimary ? 0.3 : 0.2) + density * (isPrimary ? 0.8 : 0.7) * sizeMul) * layer.sizeMul;
 
       particles.push({
@@ -1180,7 +1363,8 @@ import * as THREE from './vendor/three.module.min.js';
         phase: Math.random() * Math.PI * 2,
         speed: flowSpeed,
         size: finalSize,
-        brightness: Math.min(1.0, brightness),
+        light: Math.min(1.0, light),
+        materialId: materialId,
         color: c,
         densityBias: density,
         isHighlight: false
@@ -1228,7 +1412,8 @@ import * as THREE from './vendor/three.module.min.js';
         phase: Math.random() * Math.PI * 2,
         speed: hSpeed,
         size: (0.6 + hLight * 0.7) * hLayer.sizeMul,
-        brightness: Math.min(1.0, (0.80 + hLight * 0.20) * hLayer.brightMul),
+        light: Math.min(1.0, hLight * hLayer.brightMul),
+        materialId: MAT.ENERGY_ACCENT,
         color: cH,
         densityBias: hDensity,
         isHighlight: true
@@ -1250,9 +1435,10 @@ import * as THREE from './vendor/three.module.min.js';
     var aPhase = new Float32Array(n);
     var aSpeed = new Float32Array(n);
     var aSize = new Float32Array(n);
-    var aBrightness = new Float32Array(n);
+    var aLight = new Float32Array(n);
     var aColorMix = new Float32Array(n * 3);
     var aDensityBias = new Float32Array(n);
+    var aMaterialId = new Float32Array(n);
 
     for (var i = 0; i < n; i++) {
       var p = particles[i];
@@ -1265,11 +1451,12 @@ import * as THREE from './vendor/three.module.min.js';
       aPhase[i] = p.phase;
       aSpeed[i] = p.speed;
       aSize[i] = p.size;
-      aBrightness[i] = p.brightness;
+      aLight[i] = p.light;
       aColorMix[i * 3] = p.color[0];
       aColorMix[i * 3 + 1] = p.color[1];
       aColorMix[i * 3 + 2] = p.color[2];
       aDensityBias[i] = p.densityBias;
+      aMaterialId[i] = p.materialId;
     }
 
     geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
@@ -1281,9 +1468,10 @@ import * as THREE from './vendor/three.module.min.js';
     geo.setAttribute("aPhase", new THREE.BufferAttribute(aPhase, 1));
     geo.setAttribute("aSpeed", new THREE.BufferAttribute(aSpeed, 1));
     geo.setAttribute("aSize", new THREE.BufferAttribute(aSize, 1));
-    geo.setAttribute("aBrightness", new THREE.BufferAttribute(aBrightness, 1));
+    geo.setAttribute("aBrightness", new THREE.BufferAttribute(aLight, 1));
     geo.setAttribute("aColorMix", new THREE.BufferAttribute(aColorMix, 3));
     geo.setAttribute("aDensityBias", new THREE.BufferAttribute(aDensityBias, 1));
+    geo.setAttribute("aMaterialId", new THREE.BufferAttribute(aMaterialId, 1));
   }
 
   function createFieldSystem(config, count, isPrimary, densitySeed) {
@@ -1311,7 +1499,7 @@ import * as THREE from './vendor/three.module.min.js';
         uniforms: Object.assign({}, sharedUniforms, {
           uCullMode: { value: cullMode },
           uOpacity: { value: opacity },
-          uLightDebug: uLightDebug
+          uLightDebug: uLightDebug, uMaterialDebug: uMaterialDebug
         }),
         vertexShader: fieldVertexShader,
         fragmentShader: isHighlight ? fieldHighlightFragmentShader : fieldFragmentShader,
@@ -1387,7 +1575,7 @@ import * as THREE from './vendor/three.module.min.js';
       col[i * 3] = color[0]; col[i * 3 + 1] = color[1]; col[i * 3 + 2] = color[2];
       sz[i] = 0.08 + light * 0.10;
       ph[i] = Math.random() * Math.PI * 2;
-      br[i] = 0.03 + light * 0.10;
+      br[i] = light;
     }
 
     var geo = new THREE.BufferGeometry();
@@ -1396,6 +1584,7 @@ import * as THREE from './vendor/three.module.min.js';
     geo.setAttribute("aSize", new THREE.BufferAttribute(sz, 1));
     geo.setAttribute("aPhase", new THREE.BufferAttribute(ph, 1));
     geo.setAttribute("aBrightness", new THREE.BufferAttribute(br, 1));
+    geo.setAttribute("aMaterialId", new THREE.BufferAttribute(new Float32Array(count).fill(MAT.ATMOSPHERIC_DUST), 1));
 
     var mat = new THREE.ShaderMaterial({
       uniforms: {
@@ -1404,7 +1593,7 @@ import * as THREE from './vendor/three.module.min.js';
         uReduceMotion: uReduceMotion,
         uEntrance: uEntranceProgress,
         uOpacity: { value: opacity },
-        uLightDebug: uLightDebug
+        uLightDebug: uLightDebug, uMaterialDebug: uMaterialDebug
       },
       vertexShader: dustVertexShader,
       fragmentShader: dustFragmentShader,
@@ -1517,6 +1706,7 @@ import * as THREE from './vendor/three.module.min.js';
 
     // Lighting debug mode — grayscale only, cube hidden
     uLightDebug.value = window.__lightDebug ? 1.0 : 0.0;
+    uMaterialDebug.value = window.__materialDebug ? 1.0 : 0.0;
     if (cubeGroup) cubeGroup.visible = !window.__lightDebug;
 
     var dt = lastTime ? Math.min(time - lastTime, 33) : 16;
