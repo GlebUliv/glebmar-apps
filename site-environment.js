@@ -17,14 +17,14 @@ import * as THREE from './vendor/three.module.min.js';
 
   // ─── Config ───────────────────────────────────────────────
   var DPR_CAP = 2;
-  var CUBE_HALF = 0.25;
+  var CUBE_HALF = 0.35;
   var CUBE_ROT_Y = 0.0000546;          // ~115 s per revolution
   var CUBE_INIT_ROT_Y = 32 * Math.PI / 180;
   var CUBE_INIT_ROT_X = -15 * Math.PI / 180;
   var CUBE_DRIFT_X_AMP = 0.02;
   var CUBE_DRIFT_X_FREQ = 0.00003;
-  var CUBE_OFFSET_X = 0.1;
-  var CUBE_OFFSET_Y = 0.35;             // Cube vertical offset
+  var CUBE_OFFSET_X = 0;
+  var CUBE_OFFSET_Y = 0;             // Cube vertical offset
   var BEVEL_WIDTH = CUBE_HALF * 0.12;
   var BEVEL_AMOUNT = CUBE_HALF * 0.05;
   var CORE_RADIUS = CUBE_HALF * 0.22;
@@ -474,8 +474,9 @@ var FLOW_C = {
   // We undo the rotation (transpose) then extract theta and radius.
   function worldToStream(wx, wy, wz, rotMat, bRatio) {
     var el = rotMat.elements;
-    var lx = el[0] * wx + el[1] * wy + el[2] * wz;
-    var ly = el[3] * wx + el[4] * wy + el[5] * wz;
+    var lx = wx - CUBE_OFFSET_X;
+    var ly = wy - CUBE_OFFSET_Y;
+    var lz = wz; 
 
     var theta = Math.atan2(ly / bRatio, lx);
     if (theta < 0) theta += Math.PI * 2;
@@ -618,8 +619,8 @@ var FLOW_C = {
     var dz = Math.sin(angle) * crossDist * 0.25;
 
     return {
-      x: cx + dx,
-      y: cy + dy,
+      x: cx + dx + CUBE_OFFSET_X,
+      y: cy + dy + CUBE_OFFSET_Y,
       z: cz + dz,
       crossDist: crossDist,
       crossTier: crossTier,
@@ -1131,6 +1132,7 @@ var FLOW_C = {
     "  vec3 normal = uRotation * normalLocal;",
     "  vec3 binormal = normalize(cross(normalize(center + vec3(0.001)), normal));",
     "  vec3 worldPos = center + normal * aWidthOffset + binormal * aThicknessOffset + uCubeOffset;",
+    "  worldPos += uCubeOffset;",
     // Entrance scale
     "  worldPos *= mix(0.75, 1.0, uEntrance);",
     // Scroll dispersion
