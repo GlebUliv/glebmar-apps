@@ -182,22 +182,77 @@ import * as THREE from './vendor/three.module.min.js';
     return new THREE.Matrix3().setFromMatrix4(m);
   }
 
-  // Organic density-shaped theta sampling
-  // Creates fluid-like density variation: denser regions, thinner gaps, no symmetry
-  function sampleFieldTheta(seedOffset) {
-    var theta;
-    var attempts = 0;
-    while (attempts < 20) {
-      theta = Math.random() * Math.PI * 2;
-      var density = 0.50
-        + 0.22 * Math.cos(theta * 1.5 + seedOffset)
-        + 0.12 * Math.cos(theta * 2.8 + seedOffset * 1.7 + 0.5)
-        + 0.08 * Math.cos(theta * 4.5 + seedOffset * 2.3 + 1.2);
-      density = Math.max(0.15, density);
-      if (Math.random() < density) return theta;
-      attempts++;
+  // ─── Shape Generator — Macro Density Fields ──────────────
+  // The renderer builds SHAPES first, then fills them with particles.
+  // Each shape defines density(x, y, z) in world space.
+  // Particles are importance-sampled from the density field.
+  // If particles were removed, the shapes would still be visible.
+
+  // Shape A: Upper-right, large, powerful, continuous
+  var SHAPE_A = {
+    centerline: [[0.0, 2.5, 0], [1.0, 2.0, 0.1], [2.2, 1.2, 0], [3.5, 0.2, -0.1]],
+    width: 1.0,
+    density: 1.0,
+    broken: false,
+    breakPoints: []
+  };
+
+  // Shape B: Lower-left, medium, broken
+  var SHAPE_B = {
+    centerline: [[0.5, -0.5, 0], [-0.5, -1.0, -0.1], [-1.5, -1.3, 0], [-2.8, -0.8, 0.1]],
+    width: 0.75,
+    density: 0.7,
+    broken: true,
+    breakPoints: [0.25, 0.55, 0.8]
+  };
+
+  // Shape C: Around cube, transition, never closes
+  var SHAPE_C = {
+    centerline: [[1.3, 0.4, 0], [0.6, -0.4, 0], [-0.3, -0.5, 0], [-1.1, 0.1, 0]],
+    width: 0.55,
+    density: 0.5,
+    broken: false,
+    breakPoints: []
+  };
+
+  var ALL_SHAPES = [SHAPE_A, SHAPE_B, SHAPE_C];
+
+  function nearestOnSegment(px, py, pz, ax, ay, az, bx, by, bz) {
+    var abx = bx - ax, aby = by - ay, abz = bz - az;
+    var ab2 = abx * abx + aby * aby + abz * abz;
+    if (ab2 < 1e-8) return { dist: Math.sqrt((px - ax) * (px - ax) + (py - ay) * (py - ay) + (pz - az) * (pz - az)), t: 0 };
+    var t = ((px - ax) * abx + (py - ay) * aby + (pz - az) * abz) / ab2;
+    t = Math.max(0, Math.min(1, t));
+    var dx = px - (ax + t * abx), dy = py - (ay + t * aby), dz = pz - (az + t * abz);
+    return { dist: Math.sqrt(dx * dx + dy * dy + dz * dz), t: t };
+  }
+
+  function shapeDensityAt(x, y, z, shape) {
+    var minDist = Infinity, bestT = 0;
+    for (var i = 0; i < shape.centerline.length - 1; i++) {
+      var a = shape.centerline[i], b = shape.centerline[i + 1];
+      var r = nearestOnSegment(x, y, z, a[0], a[1], a[2], b[0], b[1], b[2]);
+      if (r.dist < minDist) {
+        minDist = r.dist;
+        bestT = (i + r.t) / (shape.centerline.length - 1);
+      }
     }
-    return theta;
+    var d = Math.exp(-(minDist * minDist) / (shape.width * shape.width));
+    d *= Math.sin(bestT * Math.PI);
+    if (shape.broken) {
+      for (var j = 0; j < shape.breakPoints.length; j++) {
+        if (Math.abs(bestT - shape.breakPoints[j]) < 0.06) d *= 0.15;
+      }
+    }
+    return d * shape.density;
+  }
+
+  function totalDensityAt(x, y, z) {
+    var d = 0;
+    for (var i = 0; i < ALL_SHAPES.length; i++) {
+      d += shapeDensityAt(x, y, z, ALL_SHAPES[i]);
+    }
+    return Math.min(1.0, d);
   }
 
   // ─── Cube Shaders (LOCKED — unchanged from V1) ────────────
@@ -650,55 +705,125 @@ import * as THREE from './vendor/three.module.min.js';
     return Math.random() < 0.7 ? COLOR_GREEN : COLOR_PALE_GREEN;
   }
 
-  function generateFieldParticles(count, config, isPrimary, densitySeed) {
+  function generateFieldParticles(count, config, isPrimary, densitySeed, rotMat) {
     var particles = [];
     var highlightCount = Math.floor(count * config.highlightFraction);
     var mainCount = count - highlightCount;
     var colorPicker = isPrimary ? pickPrimaryColor : pickSecondaryColor;
-    var sizeBase = isPrimary ? 0.6 : 0.45;
-    var sizeRange = isPrimary ? 0.9 : 0.6;
-    var brightnessBase = isPrimary ? 0.75 : 0.65;
-    var brightnessRange = isPrimary ? 0.25 : 0.25;
     var halfWidth = config.width * 0.5;
     var halfThickness = config.thickness * 0.5;
     var radiusRange = config.radiusMax - config.radiusMin;
+    var bRatio = config.radiusBRatio;
+    var el = rotMat.elements;
 
+    // Importance sampling: generate candidate, compute world position,
+    // evaluate density field, accept if random < density.
+    // Zero density → no particles. High density → many particles.
     for (var i = 0; i < mainCount; i++) {
-      var theta = sampleFieldTheta(densitySeed);
-      var streamRadius = config.radiusMin + Math.pow(Math.random(), 0.8) * radiusRange;
+      var theta = 0, streamRadius = 0, widthOff = 0, thickOff = 0, density = 0;
+      var accepted = false;
+
+      for (var attempt = 0; attempt < 30; attempt++) {
+        theta = Math.random() * Math.PI * 2;
+        streamRadius = config.radiusMin + Math.random() * radiusRange;
+        widthOff = gaussian() * halfWidth * 0.65;
+        thickOff = gaussian() * halfThickness * 0.65;
+
+        // Compute world position (matching shader math, without per-particle noise)
+        var cosT = Math.cos(theta), sinT = Math.sin(theta);
+        var lx = streamRadius * cosT;
+        var ly = streamRadius * bRatio * sinT;
+        var wx = el[0] * lx + el[3] * ly;
+        var wy = el[1] * lx + el[4] * ly;
+        var wz = el[2] * lx + el[5] * ly;
+
+        // Add width offset contribution (approximate normal direction)
+        var nLen = Math.sqrt(bRatio * bRatio * cosT * cosT + sinT * sinT);
+        if (nLen > 1e-6) {
+          var nlx = bRatio * cosT / nLen, nly = sinT / nLen;
+          wx += (el[0] * nlx + el[3] * nly) * widthOff;
+          wy += (el[1] * nlx + el[4] * nly) * widthOff;
+          wz += (el[2] * nlx + el[5] * nly) * widthOff;
+        }
+
+        density = totalDensityAt(wx, wy, wz);
+        if (Math.random() < density) {
+          accepted = true;
+          break;
+        }
+      }
+
+      if (!accepted) {
+        // Particle rejected by density field — assign to dust tier (very dim)
+        density = 0.08;
+      }
+
       var c = colorPicker();
+      // Brightness and size proportional to local density
+      // High density → bright, large particles (mass core)
+      // Low density → dim, small particles (fragmentation/dust)
       particles.push({
         streamRadius: streamRadius,
         streamPos: theta / (Math.PI * 2),
         seed: Math.random(),
-        widthOffset: gaussian() * halfWidth * 0.65,
-        thicknessOffset: gaussian() * halfThickness * 0.65,
+        widthOffset: widthOff,
+        thicknessOffset: thickOff,
         phase: Math.random() * Math.PI * 2,
         speed: config.baseSpeed * (0.96 + Math.random() * 0.08),
-        size: sizeBase + Math.random() * sizeRange,
-        brightness: brightnessBase + Math.random() * brightnessRange,
+        size: (isPrimary ? 0.3 : 0.2) + density * (isPrimary ? 0.8 : 0.7),
+        brightness: (isPrimary ? 0.30 : 0.25) + density * (isPrimary ? 0.65 : 0.60),
         color: c,
-        densityBias: 0.5 + 0.3 * Math.cos(theta * 1.5),
+        densityBias: density,
         isHighlight: false
       });
     }
 
+    // Highlights — only in high-density cores (density > 0.4)
     for (var j = 0; j < highlightCount; j++) {
-      var thetaH = sampleFieldTheta(densitySeed + 1.5);
-      var streamRadiusH = config.radiusMin + Math.pow(Math.random(), 0.6) * radiusRange;
+      var theta = 0, streamRadius = 0, widthOff = 0, thickOff = 0, density = 0;
+      var accepted = false;
+
+      for (var attempt = 0; attempt < 40; attempt++) {
+        theta = Math.random() * Math.PI * 2;
+        streamRadius = config.radiusMin + Math.random() * radiusRange;
+        widthOff = gaussian() * halfWidth * 0.25;
+        thickOff = gaussian() * halfThickness * 0.25;
+
+        var cosT = Math.cos(theta), sinT = Math.sin(theta);
+        var lx = streamRadius * cosT;
+        var ly = streamRadius * bRatio * sinT;
+        var wx = el[0] * lx + el[3] * ly;
+        var wy = el[1] * lx + el[4] * ly;
+        var wz = el[2] * lx + el[5] * ly;
+
+        density = totalDensityAt(wx, wy, wz);
+        if (density > 0.4 && Math.random() < density) {
+          accepted = true;
+          break;
+        }
+      }
+
+      if (!accepted) {
+        theta = Math.random() * Math.PI * 2;
+        streamRadius = config.radiusMin + Math.random() * radiusRange;
+        widthOff = gaussian() * halfWidth * 0.25;
+        thickOff = gaussian() * halfThickness * 0.25;
+        density = 0.3;
+      }
+
       var cH = pickHighlightColor();
       particles.push({
-        streamRadius: streamRadiusH,
-        streamPos: thetaH / (Math.PI * 2),
+        streamRadius: streamRadius,
+        streamPos: theta / (Math.PI * 2),
         seed: Math.random(),
-        widthOffset: gaussian() * halfWidth * 0.35,
-        thicknessOffset: gaussian() * halfThickness * 0.35,
+        widthOffset: widthOff,
+        thicknessOffset: thickOff,
         phase: Math.random() * Math.PI * 2,
         speed: config.baseSpeed * (0.96 + Math.random() * 0.08),
-        size: 0.6 + Math.random() * 0.7,
-        brightness: 0.80 + Math.random() * 0.20,
+        size: 0.6 + density * 0.7,
+        brightness: 0.80 + density * 0.20,
         color: cH,
-        densityBias: 0.7,
+        densityBias: density,
         isHighlight: true
       });
     }
@@ -758,7 +883,7 @@ import * as THREE from './vendor/three.module.min.js';
     var rotationMat3 = eulerToMat3(config.inclX, config.inclY, config.inclZ);
     var cubeViewZ = -camera.position.z;
 
-    var particles = generateFieldParticles(count, config, isPrimary, densitySeed);
+    var particles = generateFieldParticles(count, config, isPrimary, densitySeed, rotationMat3);
     var mainParts = particles.filter(function (p) { return !p.isHighlight; });
     var highlightParts = particles.filter(function (p) { return p.isHighlight; });
 
@@ -817,20 +942,44 @@ import * as THREE from './vendor/three.module.min.js';
     var ph = new Float32Array(count);
     var br = new Float32Array(count);
 
+    // Dust uses same density field — concentrated near shapes, sparse in voids
     for (var i = 0; i < count; i++) {
-      var r = 1.8 + Math.random() * 3.2;
-      var theta = Math.random() * Math.PI * 2;
-      var zOff = (Math.random() - 0.5) * 1.5;
-      pos[i * 3] = r * Math.cos(theta);
-      pos[i * 3 + 1] = r * 0.5 * Math.sin(theta);
+      var x, y, zOff, density = 0;
+      var accepted = false;
+
+      for (var attempt = 0; attempt < 20; attempt++) {
+        // Sample in world space across a broad region
+        x = (Math.random() - 0.5) * 8.0;
+        y = (Math.random() - 0.5) * 5.0;
+        zOff = (Math.random() - 0.5) * 1.5;
+        density = totalDensityAt(x, y, zOff);
+        // Accept with lower threshold — dust fills medium and low density
+        if (Math.random() < density * 0.5 + 0.05) {
+          accepted = true;
+          break;
+        }
+      }
+
+      if (!accepted) {
+        // Fallback — sparse random in outer region
+        var r = 2.5 + Math.random() * 2.5;
+        var theta = Math.random() * Math.PI * 2;
+        x = r * Math.cos(theta);
+        y = r * 0.5 * Math.sin(theta);
+        zOff = (Math.random() - 0.5) * 1.5;
+        density = 0.05;
+      }
+
+      pos[i * 3] = x;
+      pos[i * 3 + 1] = y;
       pos[i * 3 + 2] = zOff;
 
       var colorRoll = Math.random();
       var color = colorRoll < 0.65 ? COLOR_NAVY : (colorRoll < 0.90 ? COLOR_GREEN : COLOR_PALE_GREEN);
       col[i * 3] = color[0]; col[i * 3 + 1] = color[1]; col[i * 3 + 2] = color[2];
-      sz[i] = 0.2 + Math.random() * 0.3;
+      sz[i] = 0.12 + density * 0.15;
       ph[i] = Math.random() * Math.PI * 2;
-      br[i] = 0.25 + Math.random() * 0.20;
+      br[i] = 0.10 + density * 0.15;
     }
 
     var geo = new THREE.BufferGeometry();
