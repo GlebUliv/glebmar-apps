@@ -808,6 +808,7 @@ var FLOW_C = {
     "}"
   ].join("\n");
 
+  
   var cubeHighlightFragmentShader = [
     glslMaterialDebugColor,
     "varying vec3 vColor;",
