@@ -589,17 +589,17 @@ var FLOW_C = {
     var texIdx0 = segIdx, texIdx1 = Math.min(segIdx + 1, stream.textureStreaks.length - 1);
     var texDensity = stream.textureStreaks[texIdx0] + (stream.textureStreaks[texIdx1] - stream.textureStreaks[texIdx0]) * st;
 
-    // Cross-section tier: 35% core, 35% medium, 20% fragment, 10% dust
-    // Denser core, less dust → coherent ribbon feel
+    // Cross-section tier: 50% core, 35% medium, 12% fragment, 3% dust
+    // Concentrated core → coherent ring structure
     var tierRoll = Math.random();
     var crossDist, crossTier;
-    if (tierRoll < 0.35) {
-      crossDist = Math.pow(Math.random(), 0.8) * coreR;
+    if (tierRoll < 0.50) {
+      crossDist = Math.pow(Math.random(), 0.85) * coreR;
       crossTier = 0;
-    } else if (tierRoll < 0.70) {
+    } else if (tierRoll < 0.85) {
       crossDist = coreR + Math.random() * (medR - coreR);
       crossTier = 1;
-    } else if (tierRoll < 0.90) {
+    } else if (tierRoll < 0.97) {
       crossDist = medR + Math.random() * (fragR - medR);
       crossTier = 2;
     } else {
@@ -608,8 +608,8 @@ var FLOW_C = {
     }
 
     // Texture modulation — calm regions push particles outward
-    if (Math.random() > texDensity * 0.85 && crossTier < 2) {
-      crossDist *= 1.20;
+    if (Math.random() > texDensity * 0.92 && crossTier < 2) {
+      crossDist *= 1.08;
     }
 
     // Cross-section offset — flattened in y, thin in z
@@ -1122,9 +1122,9 @@ var FLOW_C = {
     "  float n4 = sin(theta * 5.5 + aSeed * 8.1);",
     "  float n5 = cos(theta * 7.3 + aSeed * 3.7);",
     "  vec3 centerLocal = vec3(",
-    "    aStreamRadius * cos(theta) + n1 * aStreamRadius * 0.08 + n4 * aStreamRadius * 0.03,",
-    "    aStreamRadius * uRadiusBRatio * sin(theta) + n2 * aStreamRadius * 0.06 + n5 * aStreamRadius * 0.02,",
-    "    n3 * aStreamRadius * 0.05 + n4 * aStreamRadius * 0.02",
+    "    aStreamRadius * cos(theta) + n1 * aStreamRadius * 0.04 + n4 * aStreamRadius * 0.015,",
+    "    aStreamRadius * uRadiusBRatio * sin(theta) + n2 * aStreamRadius * 0.03 + n5 * aStreamRadius * 0.01,",
+    "    n3 * aStreamRadius * 0.025 + n4 * aStreamRadius * 0.01",
     "  );",
     "  vec3 center = uRotation * centerLocal;",
     // Normal and binormal for width/thickness offsets
@@ -1402,7 +1402,7 @@ var FLOW_C = {
           streamRadius = Math.max(config.radiusMin, Math.min(config.radiusMax, stream.radius));
 
           // Width offset from cross-section distance
-          widthOff = gaussian() * 0.04 + (rpos.crossDist - 0.3) * 0.10;
+          widthOff = gaussian() * 0.025 + (rpos.crossDist - 0.3) * 0.06;
 
           // Depth layer controls thickness
           thickOff = layer.thickBase + gaussian() * layer.thickRange;
@@ -1472,7 +1472,7 @@ var FLOW_C = {
         hDensity = totalDensityAt(hRpos.x, hRpos.y, hRpos.z);
         hLight = lightFieldAt(hRpos.x, hRpos.y, hRpos.z);
 
-        if (hLight > 0.6 && hDensity > 0.4 && Math.random() < hLight * hDensity * 1.2) {
+        if (hLight > 0.7 && hDensity > 0.55 && Math.random() < hLight * hDensity * 1.4) {
           var hStream = worldToStream(hRpos.x, hRpos.y, hRpos.z, rotMat, bRatio);
           hTheta = hStream.theta;
           hRadius = Math.max(config.radiusMin, Math.min(config.radiusMax, hStream.radius));
