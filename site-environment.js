@@ -600,29 +600,39 @@ var FLOW_C = {
     var normDist = crossDist / dustR; // 0 at center, 1 at edge
     var densityProfile = Math.exp(-normDist * normDist * 2.5); // Gaussian falloff
 
-    // Internal energy veins — longitudinal streaks that merge and separate
-    // Creates perception of energy currents inside one larger structure
+    // Cross-section offset — flattened in y, thin in z
+    var angle = Math.random() * Math.PI * 2;
+
+    // Internal energy veins — longitudinal density concentrations inside the ribbon
+    // Each vein has an angular position that shifts with t (merge/separate behavior)
+    // veinFactor: 0 = between veins, 1 = on a vein
     var veinCount = stream.veinCount || 0;
     var veinAmp = stream.veinAmplitude || 0;
+    var veinFactor = 0;
     if (veinCount > 0 && crossTier < 2) {
-      var veinMod = 0;
       for (var vi = 0; vi < veinCount; vi++) {
-        var veinFreq = 2.0 + vi * 1.5;
-        var veinPhase = vi * 1.7;
-        veinMod += Math.sin(t * Math.PI * veinFreq + veinPhase) * (1.0 / veinCount);
+        // Base angular position evenly distributed around cross-section
+        var veinBaseAngle = (vi / veinCount) * Math.PI * 2;
+        // Oscillating shift creates merge/separate behavior — never sharp crossings
+        var veinShift = Math.sin(t * Math.PI * (1.2 + vi * 0.6) + vi * 2.1) * 0.9;
+        var veinAngle = veinBaseAngle + veinShift;
+        // Angular distance (wrapped)
+        var angleDist = Math.abs(angle - veinAngle);
+        angleDist = Math.min(angleDist, Math.PI * 2 - angleDist);
+        // Gaussian proximity — close to vein = high factor
+        var proximity = Math.exp(-angleDist * angleDist * 2.5);
+        veinFactor = Math.max(veinFactor, proximity);
       }
-      // Veins pull particles slightly toward/away from center — subtle
-      crossDist *= (1.0 + veinMod * veinAmp);
+      // Veins pull particles slightly toward center — creates density concentration
+      crossDist *= (1.0 - veinFactor * veinAmp * 0.3);
       crossDist = Math.min(crossDist, dustR * 0.95);
     }
 
-    // Texture modulation — calm regions push particles outward
-    if (Math.random() > texDensity * 0.92 && crossTier < 2) {
-      crossDist *= 1.08;
+    // Texture modulation — structure instead of randomness
+    // Calm regions (between veins) push slightly outward, vein regions stay compact
+    if (crossTier < 2) {
+      crossDist *= (1.0 + (1.0 - veinFactor) * 0.06);
     }
-
-    // Cross-section offset — flattened in y, thin in z
-    var angle = Math.random() * Math.PI * 2;
     var dx = Math.cos(angle) * crossDist;
     var dy = Math.sin(angle) * crossDist * 0.70;
     var dz = Math.sin(angle) * crossDist * 0.30;
@@ -634,6 +644,7 @@ var FLOW_C = {
       crossDist: crossDist,
       crossTier: crossTier,
       densityProfile: densityProfile,
+      veinFactor: veinFactor,
       t: t,
       texDensity: texDensity,
       stream: stream
@@ -1106,6 +1117,7 @@ var FLOW_C = {
     "attribute vec3 aColorMix;",
     "attribute float aDensityBias;",
     "attribute float aMaterialId;",
+    "attribute float aVeinFactor;",
     "uniform float uTime;",
     "uniform float uPointScale;",
     "uniform float uReduceMotion;",
@@ -1182,9 +1194,11 @@ var FLOW_C = {
     "  vColor = aColorMix;",
     "  vMaterialId = aMaterialId;",
     "  float clarityMod = mix(1.0, mix(0.20, 1.0, clarityFactor), frontWeight);",
-    "  vDiffuse = matDiffuse * densityMod * widthFactor * clarityMod;",
+    // Vein brightness redistribution — veins brighter, surrounding calmer, no total increase
+    "  float veinBoost = mix(0.82, 1.18, aVeinFactor);",
+    "  vDiffuse = matDiffuse * densityMod * widthFactor * clarityMod * veinBoost;",
     // Stream emission: center emits more, edges less, density reinforces
-    "  vEmission = matEmission * widthFactor * densityMod * clarityMod;",
+    "  vEmission = matEmission * widthFactor * densityMod * clarityMod * veinBoost;",
     "  vSaturation = matSat;",
     "  vSoftness = matSoft;",
     // Depth attenuation
@@ -1405,10 +1419,12 @@ var FLOW_C = {
         var rpos = sampleRibbonPosition();
 
         density = totalDensityAt(rpos.x, rpos.y, rpos.z);
-        // Acceptance: continuous density profile × shape density × tier
+        // Acceptance: continuous density profile × shape density × tier × vein concentration
         var tierAccept = [1.0, 0.92, 0.65, 0.25][rpos.crossTier];
         var profileAccept = rpos.densityProfile;
-        if (Math.random() < density * tierAccept * profileAccept) {
+        // Vein particles accepted more readily — creates density concentrations
+        var veinBoost = 0.7 + rpos.veinFactor * 0.3;
+        if (Math.random() < density * tierAccept * profileAccept * veinBoost) {
           var stream = worldToStream(rpos.x, rpos.y, rpos.z, rotMat, bRatio);
           theta = stream.theta;
           streamRadius = Math.max(config.radiusMin, Math.min(config.radiusMax, stream.radius));
@@ -1459,6 +1475,7 @@ var FLOW_C = {
         materialId: materialId,
         color: c,
         densityBias: density,
+        veinFactor: rpos.veinFactor,
         isHighlight: false
       });
     }
@@ -1508,6 +1525,7 @@ var FLOW_C = {
         materialId: MAT.ENERGY_ACCENT,
         color: cH,
         densityBias: hDensity,
+        veinFactor: hRpos.veinFactor,
         isHighlight: true
       });
     }
@@ -1531,6 +1549,7 @@ var FLOW_C = {
     var aColorMix = new Float32Array(n * 3);
     var aDensityBias = new Float32Array(n);
     var aMaterialId = new Float32Array(n);
+    var aVeinFactor = new Float32Array(n);
 
     for (var i = 0; i < n; i++) {
       var p = particles[i];
@@ -1549,6 +1568,7 @@ var FLOW_C = {
       aColorMix[i * 3 + 2] = p.color[2];
       aDensityBias[i] = p.densityBias;
       aMaterialId[i] = p.materialId;
+      aVeinFactor[i] = p.veinFactor || 0;
     }
 
     geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
@@ -1564,6 +1584,7 @@ var FLOW_C = {
     geo.setAttribute("aColorMix", new THREE.BufferAttribute(aColorMix, 3));
     geo.setAttribute("aDensityBias", new THREE.BufferAttribute(aDensityBias, 1));
     geo.setAttribute("aMaterialId", new THREE.BufferAttribute(aMaterialId, 1));
+    geo.setAttribute("aVeinFactor", new THREE.BufferAttribute(aVeinFactor, 1));
   }
 
   function createFieldSystem(config, count, isPrimary, densitySeed) {
