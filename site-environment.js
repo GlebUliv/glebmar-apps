@@ -41,41 +41,41 @@ import * as THREE from './vendor/three.module.min.js';
 
   // Primary field: wide flowing river, dominant
   var FIELD_PRIMARY = {
-    radiusMin: 1.35 * CUBE_WIDTH,
-    radiusMax: 2.55 * CUBE_WIDTH,
-    radiusBRatio: 0.82,               // minor/major ratio
-    width: 0.72,                       // river width — very wide to dissolve ring appearance
-    thickness: 0.28,
-    inclX: -18 * Math.PI / 180,
-    inclY: 13 * Math.PI / 180,
-    inclZ: -10 * Math.PI / 180,
-    baseSpeed: 2 * Math.PI / 90,       // 90s per traversal
-    opacity: 0.82,
-    highlightOpacity: 0.45,
-    highlightFraction: 0.04
-  };
+  radiusMin: 1.35 * CUBE_WIDTH,
+  radiusMax: 2.55 * CUBE_WIDTH,
+  radiusBRatio: 0.82,
+  width: 0.15,                       // БЫЛО 0.25 → ЕЩЁ УЖЕ
+  thickness: 0.28,
+  inclX: -18 * Math.PI / 180,
+  inclY: 13 * Math.PI / 180,
+  inclZ: -10 * Math.PI / 180,
+  baseSpeed: 2 * Math.PI / 90,
+  opacity: 1,                     // БЫЛО 0.92 → ПЛОТНЕЕ
+  highlightOpacity: 0.65,
+  highlightFraction: 0.04
+};
 
   // Secondary field: different inclination, thinner, adds complexity
   var FIELD_SECONDARY = {
-    radiusMin: 0.90 * CUBE_WIDTH,
-    radiusMax: 1.95 * CUBE_WIDTH,
-    radiusBRatio: 0.75,
-    width: 0.48,
-    thickness: 0.20,
-    inclX: 5 * Math.PI / 180,
-    inclY: -8 * Math.PI / 180,
-    inclZ: 18 * Math.PI / 180,
-    baseSpeed: 2 * Math.PI / 115,
-    opacity: 0.68,
-    highlightOpacity: 0.35,
-    highlightFraction: 0.05
-  };
+  radiusMin: 0.90 * CUBE_WIDTH,
+  radiusMax: 1.95 * CUBE_WIDTH,
+  radiusBRatio: 0.75,
+  width: 0.12,                       // БЫЛО 0.18 → УЖЕ
+  thickness: 0.20,
+  inclX: 5 * Math.PI / 180,
+  inclY: -8 * Math.PI / 180,
+  inclZ: 18 * Math.PI / 180,
+  baseSpeed: 2 * Math.PI / 115,
+  opacity: 0.9,
+  highlightOpacity: 0.55,
+  highlightFraction: 0.05
+};
 
   var FIELD_COUNTS = {
-    desktop: { primary: 24000, secondary: 11000, dust: 3000 },
-    tablet:  { primary: 14000, secondary: 6500,  dust: 1500 },
-    mobile:  { primary: 8000,  secondary: 3500,  dust: 800  }
-  };
+  desktop: { primary: 24000, secondary: 11000, dust: 400 },   // БЫЛО 800
+  tablet:  { primary: 14000, secondary: 6500,  dust: 200 },   // БЫЛО 400
+  mobile:  { primary: 8000,  secondary: 3500,  dust: 100 }    // БЫЛО 200
+};
 
   // ─── Colors ───────────────────────────────────────────────
   var COLOR_NAVY       = [0.118, 0.161, 0.231];
@@ -199,30 +199,25 @@ import * as THREE from './vendor/three.module.min.js';
 
   // Shape A: Upper-right, large, powerful, continuous
   var SHAPE_A = {
-    centerline: [[0.0, 2.5, 0], [1.0, 2.0, 0.1], [2.2, 1.2, 0], [3.5, 0.2, -0.1]],
-    width: 1.0,
-    density: 1.0,
-    broken: false,
-    breakPoints: []
-  };
+  centerline: [[2.1, 0.0, 0], [1.7, 0.85, 0.08], [0.4, 1.45, 0], [-0.9, 1.15, -0.08],
+               [-1.9, 0.0, 0], [-1.3, -0.95, 0.08], [0.1, -1.55, 0], [1.4, -1.15, -0.08],
+               [2.1, 0.0, 0]],
+  width: 0.5, density: 1.0, broken: false, breakPoints: []
+};
 
-  // Shape B: Lower-left, medium, broken
-  var SHAPE_B = {
-    centerline: [[0.5, -0.5, 0], [-0.5, -1.0, -0.1], [-1.5, -1.3, 0], [-2.8, -0.8, 0.1]],
-    width: 0.75,
-    density: 0.7,
-    broken: true,
-    breakPoints: [0.25, 0.55, 0.8]
-  };
+var SHAPE_B = {
+  centerline: [[1.4, 0.0, 0.05], [1.1, 0.55, 0.08], [0.2, 0.95, 0.05], [-0.7, 0.65, -0.02],
+               [-1.4, 0.0, 0], [-1.0, -0.65, 0.05], [0.0, -1.05, 0], [0.9, -0.85, -0.05],
+               [1.4, 0.0, 0.05]],
+  width: 0.35, density: 0.7, broken: false, breakPoints: []
+};
 
-  // Shape C: Around cube, transition, never closes
-  var SHAPE_C = {
-    centerline: [[1.3, 0.4, 0], [0.6, -0.4, 0], [-0.3, -0.5, 0], [-1.1, 0.1, 0]],
-    width: 0.55,
-    density: 0.5,
-    broken: false,
-    breakPoints: []
-  };
+var SHAPE_C = {
+  centerline: [[0.9, 0.0, 0.02], [0.7, 0.35, 0.05], [0.1, 0.65, 0.02], [-0.5, 0.45, -0.02],
+               [-1.0, 0.0, 0], [-0.7, -0.45, 0.03], [-0.1, -0.75, 0], [0.5, -0.65, -0.03],
+               [0.9, 0.0, 0.02]],
+  width: 0.25, density: 0.5, broken: false, breakPoints: []
+};
 
   var ALL_SHAPES = [SHAPE_A, SHAPE_B, SHAPE_C];
 
@@ -429,36 +424,23 @@ import * as THREE from './vendor/three.module.min.js';
 
   // Flow A: Primary energy river — large, continuous, dominant
   var FLOW_A = {
-    centerline: [
-      [0.3, 2.8, 0], [1.0, 2.3, 0.05], [1.8, 1.7, 0.08],
-      [2.5, 0.9, 0.02], [3.0, 0.1, -0.05], [2.7, -0.7, 0]
-    ],
-    flowWidth: 0.12,
-    speedCoherence: 0.02,
-    weight: 0.45
-  };
-
-  // Flow B: Secondary stream — broken, less intense
-  var FLOW_B = {
-    centerline: [
-      [0.9, -0.5, 0], [0.3, -0.9, -0.05], [-0.5, -1.2, 0],
-      [-1.4, -1.3, 0.05], [-2.2, -0.9, 0], [-2.7, -0.3, 0.08]
-    ],
-    flowWidth: 0.10,
-    speedCoherence: 0.03,
-    weight: 0.30
-  };
-
-  // Flow C: Local circulation around cube — never closes
-  var FLOW_C = {
-    centerline: [
-      [1.5, 0.5, 0], [1.0, 0.1, 0], [0.3, -0.2, 0],
-      [-0.5, -0.1, 0], [-1.2, 0.3, 0]
-    ],
-    flowWidth: 0.08,
-    speedCoherence: 0.04,
-    weight: 0.25
-  };
+  centerline: [[2.1, 0.0, 0], [1.7, 0.85, 0.08], [0.4, 1.45, 0], [-0.9, 1.15, -0.08],
+               [-1.9, 0.0, 0], [-1.3, -0.95, 0.08], [0.1, -1.55, 0], [1.4, -1.15, -0.08],
+               [2.1, 0.0, 0]],
+  flowWidth: 0.08, speedCoherence: 0.015, weight: 0.50
+};
+var FLOW_B = {
+  centerline: [[1.4, 0.0, 0.05], [1.1, 0.55, 0.08], [0.2, 0.95, 0.05], [-0.7, 0.65, -0.02],
+               [-1.4, 0.0, 0], [-1.0, -0.65, 0.05], [0.0, -1.05, 0], [0.9, -0.85, -0.05],
+               [1.4, 0.0, 0.05]],
+  flowWidth: 0.06, speedCoherence: 0.018, weight: 0.35
+};
+var FLOW_C = {
+  centerline: [[0.9, 0.0, 0.02], [0.7, 0.35, 0.05], [0.1, 0.65, 0.02], [-0.5, 0.45, -0.02],
+               [-1.0, 0.0, 0], [-0.7, -0.45, 0.03], [-0.1, -0.75, 0], [0.5, -0.65, -0.03],
+               [0.9, 0.0, 0.02]],
+  flowWidth: 0.05, speedCoherence: 0.020, weight: 0.15
+};
 
   var ALL_FLOWS = [FLOW_A, FLOW_B, FLOW_C];
 
@@ -520,63 +502,51 @@ import * as THREE from './vendor/three.module.min.js';
   // Edges dissolve naturally — no abrupt termination.
 
   var RIBBON = {
-    // Dominant stream — top-right, bends around cube, exits bottom-left
-    // Cube is at (0.1, 0.35) with half=0.25 — flow deflects around it
-    centerline: [
-      [3.0,  1.6,  0.12],   // upper-right entry
-      [2.3,  1.1,  0.08],   // curve inward
-      [1.6,  0.7,  0.04],   // approach cube from right
-      [0.8,  0.15, -0.02],  // bend below cube (cube bottom ~0.10)
-      [0.1, -0.15, -0.18],  // pass below-left of cube
-      [-0.7,-0.35, -0.08],  // emerge left, curving down
-      [-1.5,-0.55, 0.04],   // extend lower-left
-      [-2.3,-0.75, 0.10]    // dissolve at edge
-    ],
-    coreRadius:    [0.14, 0.16, 0.18, 0.15, 0.12, 0.14, 0.12, 0.08],
-    mediumRadius:  [0.34, 0.38, 0.40, 0.34, 0.28, 0.30, 0.26, 0.18],
-    fragmentRadius:[0.62, 0.68, 0.72, 0.60, 0.50, 0.52, 0.46, 0.32],
-    dustRadius:    [0.95, 1.00, 1.05, 0.88, 0.75, 0.76, 0.68, 0.48],
-    textureStreaks: [1.4, 0.6, 1.3, 0.7, 1.5, 0.5, 1.2, 0.9],
-    speedCoherence: 0.008,
-    weight: 0.65
-  };
+  centerline: [
+    [2.1, 0.0, 0.0], [1.7, 0.85, 0.08], [0.4, 1.45, 0.0], [-0.9, 1.15, -0.08],
+    [-1.9, 0.0, 0.0], [-1.3, -0.95, 0.08], [0.1, -1.55, 0.0], [1.4, -1.15, -0.08],
+    [2.1, 0.0, 0.0]
+  ],
+  coreRadius: [0.08, 0.09, 0.10, 0.09, 0.08, 0.09, 0.10, 0.09, 0.08],
+  mediumRadius: [0.20, 0.22, 0.24, 0.22, 0.20, 0.22, 0.24, 0.22, 0.20],
+  fragmentRadius: [0.38, 0.42, 0.45, 0.42, 0.38, 0.42, 0.45, 0.42, 0.38],
+  dustRadius: [0.58, 0.62, 0.65, 0.62, 0.58, 0.62, 0.65, 0.62, 0.58],
+  textureStreaks: [1.2, 1.0, 1.3, 1.1, 1.2, 1.0, 1.3, 1.1, 1.2],
+  speedCoherence: 0.008,
+  weight: 0.70
+};
 
   // Secondary stream A — splits above cube, arcs over top, merges left
   var RIBBON_STREAM_A = {
-    centerline: [
-      [1.8,  0.9,  0.06],   // branch from main flow
-      [1.2,  1.0,  0.10],   // diverge upward
-      [0.5,  1.1,  0.15],   // arc over cube (cube top ~0.60)
-      [-0.2, 0.9,  0.12],   // descend behind cube
-      [-0.9, 0.5,  0.06],   // merge back toward main
-      [-1.4, 0.1,  0.02]    // rejoin main flow
-    ],
-    coreRadius:    [0.10, 0.11, 0.12, 0.10, 0.09, 0.07],
-    mediumRadius:  [0.24, 0.26, 0.28, 0.24, 0.20, 0.16],
-    fragmentRadius:[0.45, 0.48, 0.50, 0.42, 0.36, 0.28],
-    dustRadius:    [0.70, 0.72, 0.75, 0.62, 0.52, 0.40],
-    textureStreaks: [1.2, 0.8, 1.3, 0.7, 1.1, 0.9],
-    speedCoherence: 0.012,
-    weight: 0.25
-  };
+  centerline: [
+    [1.4, 0.0, 0.05], [1.1, 0.55, 0.08], [0.2, 0.95, 0.05], [-0.7, 0.65, -0.02],
+    [-1.4, 0.0, 0.0], [-1.0, -0.65, 0.05], [0.0, -1.05, 0.0], [0.9, -0.85, -0.05],
+    [1.4, 0.0, 0.05]
+  ],
+  coreRadius: [0.06, 0.07, 0.08, 0.07, 0.06, 0.07, 0.08, 0.07, 0.06],
+  mediumRadius: [0.15, 0.17, 0.18, 0.17, 0.15, 0.17, 0.18, 0.17, 0.15],
+  fragmentRadius: [0.28, 0.30, 0.32, 0.30, 0.28, 0.30, 0.32, 0.30, 0.28],
+  dustRadius: [0.42, 0.45, 0.48, 0.45, 0.42, 0.45, 0.48, 0.45, 0.42],
+  textureStreaks: [1.0, 0.9, 1.1, 1.0, 1.0, 0.9, 1.1, 1.0, 1.0],
+  speedCoherence: 0.012,
+  weight: 0.25
+};
 
   // Secondary stream B — splits below, curves behind cube (deeper z), merges
   var RIBBON_STREAM_B = {
-    centerline: [
-      [0.6,  0.0,  -0.10],  // branch from main below cube
-      [0.2, -0.2,  -0.30],  // dive behind cube
-      [-0.3,-0.25, -0.40],  // deep behind
-      [-0.8,-0.15, -0.25],  // curve back toward main
-      [-1.2,-0.25, -0.10]   // merge
-    ],
-    coreRadius:    [0.08, 0.09, 0.10, 0.08, 0.06],
-    mediumRadius:  [0.20, 0.22, 0.24, 0.18, 0.14],
-    fragmentRadius:[0.38, 0.40, 0.42, 0.34, 0.24],
-    dustRadius:    [0.58, 0.60, 0.62, 0.50, 0.36],
-    textureStreaks: [1.1, 0.9, 1.2, 0.8, 1.0],
-    speedCoherence: 0.014,
-    weight: 0.10
-  };
+  centerline: [
+    [0.9, 0.0, 0.02], [0.7, 0.35, 0.05], [0.1, 0.65, 0.02], [-0.5, 0.45, -0.02],
+    [-1.0, 0.0, 0.0], [-0.7, -0.45, 0.03], [-0.1, -0.75, 0.0], [0.5, -0.65, -0.03],
+    [0.9, 0.0, 0.02]
+  ],
+  coreRadius: [0.04, 0.05, 0.06, 0.05, 0.04, 0.05, 0.06, 0.05, 0.04],
+  mediumRadius: [0.10, 0.12, 0.13, 0.12, 0.10, 0.12, 0.13, 0.12, 0.10],
+  fragmentRadius: [0.18, 0.20, 0.22, 0.20, 0.18, 0.20, 0.22, 0.20, 0.18],
+  dustRadius: [0.28, 0.30, 0.32, 0.30, 0.28, 0.30, 0.32, 0.30, 0.28],
+  textureStreaks: [0.9, 0.8, 1.0, 0.9, 0.9, 0.8, 1.0, 0.9, 0.9],
+  speedCoherence: 0.014,
+  weight: 0.05
+};
 
   var RIBBON_STREAMS = [RIBBON, RIBBON_STREAM_A, RIBBON_STREAM_B];
 
@@ -1239,7 +1209,7 @@ import * as THREE from './vendor/three.module.min.js';
     "  } else {",
     "    vec3 satColor = mix(vec3(dot(vColor, vec3(0.299, 0.587, 0.114))), vColor, vSaturation);",
     "    vec3 diffuseColor = satColor * vDiffuse;",
-    "    vec3 emissiveColor = mix(vColor, vec3(0.7, 0.95, 0.8), 0.5) * vEmission;",
+    "    vec3 emissiveColor = mix(vColor, vec3(0.8, 1.0, 0.9), 0.6) * vEmission * 1.3;",
     "    gl_FragColor = vec4(diffuseColor + emissiveColor, alpha * uOpacity);",
     "  }",
     "}"
@@ -1272,7 +1242,7 @@ import * as THREE from './vendor/three.module.min.js';
     "  } else {",
     "    vec3 satColor = mix(vec3(dot(vColor, vec3(0.299, 0.587, 0.114))), vColor, vSaturation);",
     "    vec3 diffuseColor = satColor * vDiffuse;",
-    "    vec3 emissiveColor = mix(vColor, vec3(0.85, 0.98, 0.92), 0.7) * vEmission;",
+    "    vec3 emissiveColor = mix(vColor, vec3(0.9, 1.0, 0.95), 0.8) * vEmission * 1.5;",
     "    gl_FragColor = vec4(diffuseColor + emissiveColor, alpha * uOpacity);",
     "  }",
     "}"
@@ -1466,8 +1436,7 @@ import * as THREE from './vendor/three.module.min.js';
       else { materialId = MAT.TRANSITION; sizeMul = 0.3; }
 
       // Apply depth layer multipliers
-      var finalSize = ((isPrimary ? 0.3 : 0.2) + density * (isPrimary ? 0.8 : 0.7) * sizeMul) * layer.sizeMul;
-
+      var finalSize = ((isPrimary ? 0.6 : 0.4) + density * (isPrimary ? 1.2 : 1.0) * sizeMul) * layer.sizeMul;
       particles.push({
         streamRadius: streamRadius,
         streamPos: theta / (Math.PI * 2),
@@ -1641,8 +1610,8 @@ import * as THREE from './vendor/three.module.min.js';
     // Front: renderOrder 1 (in front of cube)
     makePoints(mainParts, 0.0, config.opacity, false, -1);
     makePoints(mainParts, 1.0, config.opacity, false, 1);
-    makePoints(highlightParts, 0.0, config.highlightOpacity, true, -1);
-    makePoints(highlightParts, 1.0, config.highlightOpacity, true, 1);
+    makePoints(highlightParts, 0.0, config.highlightOpacity * 1.8, true, -1);
+    makePoints(highlightParts, 1.0, config.highlightOpacity * 1.8, true, 1);
   }
 
   // ─── Dust System Creation ─────────────────────────────────
@@ -1986,12 +1955,12 @@ import * as THREE from './vendor/three.module.min.js';
     camera.lookAt(shot0.camera.lookX, shot0.camera.lookY, shot0.camera.lookZ);
 
     renderer = new THREE.WebGLRenderer({
-      canvas: canvas, alpha: true, antialias: true,
+      canvas: canvas, alpha: false, antialias: true,
       powerPreference: "high-performance"
     });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, DPR_CAP));
     renderer.setSize(cssW, cssH, false);
-    renderer.setClearColor(0x000000, 0);
+    renderer.setClearColor(0xf0f4f3, 1);
 
     createCubeSystem(cubeCounts);
     createFieldSystem(FIELD_PRIMARY, fieldCounts.primary, true, 0.0);
