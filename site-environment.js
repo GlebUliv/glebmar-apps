@@ -308,10 +308,100 @@ import * as THREE from './vendor/three.module.min.js';
   // Classify light intensity into hierarchy tiers
   // Returns: 0=dark, 1=medium, 2=bright, 3=very bright
   function lightTier(light) {
-    if (light > 0.75) return 3; // ~5% very bright
-    if (light > 0.45) return 2; // ~15% bright
-    if (light > 0.15) return 1; // ~35% medium
-    return 0;                    // ~45% dark
+    if (light > 0.75) return 3;
+    if (light > 0.45) return 2;
+    if (light > 0.15) return 1;
+    return 0;
+  }
+
+  // ─── Flow Field — Vector Field for Particle Organization ──
+  // Particles follow flow lines, creating coherent streams.
+  // The flow field defines direction, curvature, and strength.
+  // Particles never choose independent directions — they sample this field.
+
+  // Flow A: Primary energy river — large, continuous, dominant
+  var FLOW_A = {
+    centerline: [
+      [0.3, 2.8, 0], [1.0, 2.3, 0.05], [1.8, 1.7, 0.08],
+      [2.5, 0.9, 0.02], [3.0, 0.1, -0.05], [2.7, -0.7, 0]
+    ],
+    flowWidth: 0.12,
+    speedCoherence: 0.02,
+    weight: 0.45
+  };
+
+  // Flow B: Secondary stream — broken, less intense
+  var FLOW_B = {
+    centerline: [
+      [0.9, -0.5, 0], [0.3, -0.9, -0.05], [-0.5, -1.2, 0],
+      [-1.4, -1.3, 0.05], [-2.2, -0.9, 0], [-2.7, -0.3, 0.08]
+    ],
+    flowWidth: 0.10,
+    speedCoherence: 0.03,
+    weight: 0.30
+  };
+
+  // Flow C: Local circulation around cube — never closes
+  var FLOW_C = {
+    centerline: [
+      [1.5, 0.5, 0], [1.0, 0.1, 0], [0.3, -0.2, 0],
+      [-0.5, -0.1, 0], [-1.2, 0.3, 0]
+    ],
+    flowWidth: 0.08,
+    speedCoherence: 0.04,
+    weight: 0.25
+  };
+
+  var ALL_FLOWS = [FLOW_A, FLOW_B, FLOW_C];
+
+  function sampleFlowPosition(flow) {
+    var t = Math.random();
+    var segCount = flow.centerline.length - 1;
+    var segIdx = Math.min(Math.floor(t * segCount), segCount - 1);
+    var segT = t * segCount - segIdx;
+
+    // Smoothstep for organic curvature
+    var st = segT * segT * (3 - 2 * segT);
+
+    var a = flow.centerline[segIdx];
+    var b = flow.centerline[segIdx + 1];
+
+    var x = a[0] + (b[0] - a[0]) * st;
+    var y = a[1] + (b[1] - a[1]) * st;
+    var z = a[2] + (b[2] - a[2]) * st;
+
+    // Subtle turbulence — never destroys macro flow
+    x += gaussian() * flow.flowWidth;
+    y += gaussian() * flow.flowWidth;
+    z += gaussian() * flow.flowWidth * 0.5;
+
+    return { x: x, y: y, z: z };
+  }
+
+  // Inverse mapping: world position → stream coordinates (theta, radius)
+  // This is the reverse of what the shader does: shader computes
+  // centerLocal = (radius*cos(theta), radius*bRatio*sin(theta), 0) then rotates.
+  // We undo the rotation (transpose) then extract theta and radius.
+  function worldToStream(wx, wy, wz, rotMat, bRatio) {
+    var el = rotMat.elements;
+    var lx = el[0] * wx + el[1] * wy + el[2] * wz;
+    var ly = el[3] * wx + el[4] * wy + el[5] * wz;
+
+    var theta = Math.atan2(ly / bRatio, lx);
+    if (theta < 0) theta += Math.PI * 2;
+    var radius = Math.sqrt(lx * lx + (ly / bRatio) * (ly / bRatio));
+
+    return { theta: theta, radius: radius };
+  }
+
+  function pickFlow() {
+    var r = Math.random();
+    var cumWeight = 0;
+    for (var fi = 0; fi < ALL_FLOWS.length; fi++) {
+      cumWeight += ALL_FLOWS[fi].weight;
+      if (r < cumWeight) return ALL_FLOWS[fi];
+    }
+    return ALL_FLOWS[0];
   }
 
   // ─── Cube Shaders (LOCKED — unchanged from V1) ────────────
@@ -773,75 +863,60 @@ import * as THREE from './vendor/three.module.min.js';
     var halfThickness = config.thickness * 0.5;
     var radiusRange = config.radiusMax - config.radiusMin;
     var bRatio = config.radiusBRatio;
-    var el = rotMat.elements;
 
-    // Importance sampling from density field + light field sampling
+    // Flow-based particle generation:
+    // 1. Pick a flow line (weighted)
+    // 2. Sample position along flow centerline + subtle turbulence
+    // 3. Map world position → stream coordinates (theta, radius) for shader
+    // 4. Accept based on density field
+    // 5. Brightness/size from light field
+    // Particles form coherent streams, not scattered dots.
     for (var i = 0; i < mainCount; i++) {
-      var theta = 0, streamRadius = 0, widthOff = 0, thickOff = 0, density = 0, light = 0;
+      var theta = 0, streamRadius = 0, density = 0, light = 0;
+      var widthOff = 0, thickOff = 0, flowSpeed = 0;
       var accepted = false;
 
       for (var attempt = 0; attempt < 30; attempt++) {
-        theta = Math.random() * Math.PI * 2;
-        streamRadius = config.radiusMin + Math.random() * radiusRange;
-        widthOff = gaussian() * halfWidth * 0.65;
-        thickOff = gaussian() * halfThickness * 0.65;
+        var flow = pickFlow();
+        var pos = sampleFlowPosition(flow);
 
-        var cosT = Math.cos(theta), sinT = Math.sin(theta);
-        var lx = streamRadius * cosT;
-        var ly = streamRadius * bRatio * sinT;
-        var wx = el[0] * lx + el[3] * ly;
-        var wy = el[1] * lx + el[4] * ly;
-        var wz = el[2] * lx + el[5] * ly;
-
-        var nLen = Math.sqrt(bRatio * bRatio * cosT * cosT + sinT * sinT);
-        if (nLen > 1e-6) {
-          var nlx = bRatio * cosT / nLen, nly = sinT / nLen;
-          wx += (el[0] * nlx + el[3] * nly) * widthOff;
-          wy += (el[1] * nlx + el[4] * nly) * widthOff;
-          wz += (el[2] * nlx + el[5] * nly) * widthOff;
-        }
-
-        density = totalDensityAt(wx, wy, wz);
+        density = totalDensityAt(pos.x, pos.y, pos.z);
         if (Math.random() < density) {
-          light = lightFieldAt(wx, wy, wz);
+          var stream = worldToStream(pos.x, pos.y, pos.z, rotMat, bRatio);
+          theta = stream.theta;
+          streamRadius = Math.max(config.radiusMin, Math.min(config.radiusMax, stream.radius));
+
+          // Tight offsets — particles hug the flow centerline
+          widthOff = gaussian() * flow.flowWidth;
+          thickOff = gaussian() * flow.flowWidth * 0.5;
+
+          // Coherent speed — particles in same flow move together
+          flowSpeed = config.baseSpeed * (1.0 - flow.speedCoherence * 0.5 + Math.random() * flow.speedCoherence);
+
+          light = lightFieldAt(pos.x, pos.y, pos.z);
           accepted = true;
           break;
         }
       }
 
       if (!accepted) {
-        density = 0.08;
-        // Compute light at last position anyway
-        var cosT2 = Math.cos(theta), sinT2 = Math.sin(theta);
-        var lx2 = streamRadius * cosT2;
-        var ly2 = streamRadius * bRatio * sinT2;
-        var wx2 = el[0] * lx2 + el[3] * ly2;
-        var wy2 = el[1] * lx2 + el[4] * ly2;
-        var wz2 = el[2] * lx2 + el[5] * ly2;
-        light = lightFieldAt(wx2, wy2, wz2);
+        // Rejected by density — sparse dust particle in negative space
+        theta = Math.random() * Math.PI * 2;
+        streamRadius = config.radiusMin + Math.random() * radiusRange;
+        widthOff = gaussian() * halfWidth * 0.65;
+        thickOff = gaussian() * halfThickness * 0.65;
+        density = 0.05;
+        light = 0.05;
+        flowSpeed = config.baseSpeed * (0.96 + Math.random() * 0.08);
       }
 
       var c = colorPicker();
       var tier = lightTier(light);
-      // Brightness controlled by light field, NOT random
-      // Tier 3 (very bright): 0.90-1.0
-      // Tier 2 (bright):      0.65-0.85
-      // Tier 1 (medium):       0.35-0.55
-      // Tier 0 (dark):         0.08-0.20
       var brightness, sizeMul;
-      if (tier === 3) {
-        brightness = 0.90 + light * 0.10;
-        sizeMul = 1.0;
-      } else if (tier === 2) {
-        brightness = 0.55 + light * 0.30;
-        sizeMul = 0.75;
-      } else if (tier === 1) {
-        brightness = 0.25 + light * 0.30;
-        sizeMul = 0.5;
-      } else {
-        brightness = 0.05 + light * 0.15;
-        sizeMul = 0.3;
-      }
+      if (tier === 3) { brightness = 0.90 + light * 0.10; sizeMul = 1.0; }
+      else if (tier === 2) { brightness = 0.55 + light * 0.30; sizeMul = 0.75; }
+      else if (tier === 1) { brightness = 0.25 + light * 0.30; sizeMul = 0.5; }
+      else { brightness = 0.05 + light * 0.15; sizeMul = 0.3; }
 
       particles.push({
         streamRadius: streamRadius,
@@ -850,7 +925,7 @@ import * as THREE from './vendor/three.module.min.js';
         widthOffset: widthOff,
         thicknessOffset: thickOff,
         phase: Math.random() * Math.PI * 2,
-        speed: config.baseSpeed * (0.96 + Math.random() * 0.08),
+        speed: flowSpeed,
         size: (isPrimary ? 0.3 : 0.2) + density * (isPrimary ? 0.8 : 0.7) * sizeMul,
         brightness: brightness,
         color: c,
@@ -859,54 +934,46 @@ import * as THREE from './vendor/three.module.min.js';
       });
     }
 
-    // Highlights — exist because LIGHT exists, not random
-    // Only spawn where light field is bright enough (light > 0.5)
-    var highlightsGenerated = 0;
+    // Highlights — exist because LIGHT exists along FLOW lines
     for (var j = 0; j < highlightCount; j++) {
-      var theta = 0, streamRadius = 0, widthOff = 0, thickOff = 0, density = 0, light = 0;
-      var accepted = false;
+      var hTheta = 0, hRadius = 0, hDensity = 0, hLight = 0;
+      var hWidth = 0, hThick = 0, hSpeed = 0;
+      var hAccepted = false;
 
       for (var attempt = 0; attempt < 50; attempt++) {
-        theta = Math.random() * Math.PI * 2;
-        streamRadius = config.radiusMin + Math.random() * radiusRange;
-        widthOff = gaussian() * halfWidth * 0.25;
-        thickOff = gaussian() * halfThickness * 0.25;
+        var hFlow = pickFlow();
+        var hPos = sampleFlowPosition(hFlow);
 
-        var cosT = Math.cos(theta), sinT = Math.sin(theta);
-        var lx = streamRadius * cosT;
-        var ly = streamRadius * bRatio * sinT;
-        var wx = el[0] * lx + el[3] * ly;
-        var wy = el[1] * lx + el[4] * ly;
-        var wz = el[2] * lx + el[5] * ly;
+        hDensity = totalDensityAt(hPos.x, hPos.y, hPos.z);
+        hLight = lightFieldAt(hPos.x, hPos.y, hPos.z);
 
-        density = totalDensityAt(wx, wy, wz);
-        light = lightFieldAt(wx, wy, wz);
-        // Highlights only where light is strong AND density exists
-        if (light > 0.5 && density > 0.3 && Math.random() < light * density) {
-          accepted = true;
+        if (hLight > 0.5 && hDensity > 0.3 && Math.random() < hLight * hDensity) {
+          var hStream = worldToStream(hPos.x, hPos.y, hPos.z, rotMat, bRatio);
+          hTheta = hStream.theta;
+          hRadius = Math.max(config.radiusMin, Math.min(config.radiusMax, hStream.radius));
+          hWidth = gaussian() * hFlow.flowWidth * 0.5;
+          hThick = gaussian() * hFlow.flowWidth * 0.3;
+          hSpeed = config.baseSpeed * (1.0 - hFlow.speedCoherence * 0.5 + Math.random() * hFlow.speedCoherence);
+          hAccepted = true;
           break;
         }
       }
 
-      if (!accepted) {
-        // Skip this highlight — no light to justify it
-        continue;
-      }
+      if (!hAccepted) continue;
 
-      highlightsGenerated++;
       var cH = pickHighlightColor();
       particles.push({
-        streamRadius: streamRadius,
-        streamPos: theta / (Math.PI * 2),
+        streamRadius: hRadius,
+        streamPos: hTheta / (Math.PI * 2),
         seed: Math.random(),
-        widthOffset: widthOff,
-        thicknessOffset: thickOff,
+        widthOffset: hWidth,
+        thicknessOffset: hThick,
         phase: Math.random() * Math.PI * 2,
-        speed: config.baseSpeed * (0.96 + Math.random() * 0.08),
-        size: 0.6 + light * 0.7,
-        brightness: 0.80 + light * 0.20,
+        speed: hSpeed,
+        size: 0.6 + hLight * 0.7,
+        brightness: 0.80 + hLight * 0.20,
         color: cH,
-        densityBias: density,
+        densityBias: hDensity,
         isHighlight: true
       });
     }
