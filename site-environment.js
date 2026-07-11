@@ -23,6 +23,7 @@ import * as THREE from './vendor/three.module.min.js';
   var CUBE_INIT_ROT_X = -15 * Math.PI / 180;
   var CUBE_DRIFT_X_AMP = 0.02;
   var CUBE_DRIFT_X_FREQ = 0.00003;
+  var CUBE_OFFSET_X = 1.2;             // Cube shifted right — ~70% of Hero width
   var BEVEL_WIDTH = CUBE_HALF * 0.12;
   var BEVEL_AMOUNT = CUBE_HALF * 0.05;
   var CORE_RADIUS = CUBE_HALF * 0.22;
@@ -82,13 +83,15 @@ import * as THREE from './vendor/three.module.min.js';
   var COLOR_SOFT_WHITE = [0.969, 1.000, 0.980];
 
   // ─── Composition Director — Shot Architecture ────────────
-  // The cube is a sculpture in world space at origin.
-  // The camera moves around it. Each shot is a camera composition.
-  // Cube never moves. Camera frames it differently per section.
+  // The cube is a sculpture at CUBE_OFFSET_X on the right side.
+  // The camera looks at a point left of origin so the cube sits at ~70% width.
+  // Energy mass is centered at origin — diagonal: top-right → cube → bottom-left.
+  // Left side preserves negative space for typography.
+  var LOOK_OFFSET_X = -0.6;            // Camera lookAt shifted left
   var SHOTS = [
     { // Shot 01 — Arrival (Hero)
-      // Close, slightly right, looking at cube center
-      camera: { x: 1.0, y: 0.2, z: 4.5, lookX: 0, lookY: 0, lookZ: 0 },
+      // Close, slightly right, looking left of origin — cube at ~70% width
+      camera: { x: 1.0, y: 0.2, z: 4.5, lookX: LOOK_OFFSET_X, lookY: 0, lookZ: 0 },
       cubeVisibility: 1.0,
       fieldOpacity: 1.0,
       dustOpacity: 1.0,
@@ -96,7 +99,7 @@ import * as THREE from './vendor/three.module.min.js';
     },
     { // Shot 02 — Publisher
       // Shift left and up — field occupies more visual space
-      camera: { x: -1.2, y: 0.6, z: 5.0, lookX: 0, lookY: 0, lookZ: 0 },
+      camera: { x: -1.2, y: 0.6, z: 5.0, lookX: LOOK_OFFSET_X, lookY: 0, lookZ: 0 },
       cubeVisibility: 1.0,
       fieldOpacity: 1.0,
       dustOpacity: 0.9,
@@ -104,7 +107,7 @@ import * as THREE from './vendor/three.module.min.js';
     },
     { // Shot 03 — Principles
       // Pull back, move to side — cube becomes secondary, negative space
-      camera: { x: -2.2, y: 0.4, z: 5.8, lookX: 0, lookY: 0, lookZ: 0 },
+      camera: { x: -2.2, y: 0.4, z: 5.8, lookX: LOOK_OFFSET_X, lookY: 0, lookZ: 0 },
       cubeVisibility: 0.75,
       fieldOpacity: 0.80,
       dustOpacity: 0.75,
@@ -112,7 +115,7 @@ import * as THREE from './vendor/three.module.min.js';
     },
     { // Shot 04 — Products
       // Move to another side, closer — reconnect with sculpture
-      camera: { x: 1.8, y: -0.4, z: 4.8, lookX: 0, lookY: 0, lookZ: 0 },
+      camera: { x: 1.8, y: -0.4, z: 4.8, lookX: LOOK_OFFSET_X, lookY: 0, lookZ: 0 },
       cubeVisibility: 0.90,
       fieldOpacity: 0.90,
       dustOpacity: 0.80,
@@ -120,7 +123,7 @@ import * as THREE from './vendor/three.module.min.js';
     },
     { // Shot 05 — Closing
       // Pull far back, slightly above — cube nearly disappears
-      camera: { x: 0.3, y: 1.2, z: 7.5, lookX: 0, lookY: 0, lookZ: 0 },
+      camera: { x: 0.3, y: 1.2, z: 7.5, lookX: LOOK_OFFSET_X, lookY: 0, lookZ: 0 },
       cubeVisibility: 0.30,
       fieldOpacity: 0.40,
       dustOpacity: 0.50,
@@ -1431,7 +1434,7 @@ import * as THREE from './vendor/three.module.min.js';
         cubeGroup.rotation.y = CUBE_INIT_ROT_Y;
         cubeGroup.rotation.x = CUBE_INIT_ROT_X;
         cubeGroup.scale.setScalar(c.cubeScale);
-        cubeGroup.position.set(0, 0, 0);
+        cubeGroup.position.set(CUBE_OFFSET_X, 0, 0);
       }
       for (var ci = 0; ci < cubeOpacityRefs.length; ci++) {
         cubeOpacityRefs[ci].uniform.value = cubeOpacityRefs[ci].base * c.cubeVisibility;
@@ -1453,7 +1456,7 @@ import * as THREE from './vendor/three.module.min.js';
     var s0 = SHOTS[idx];
     var s1 = SHOTS[Math.min(idx + 1, SHOTS.length - 1)];
 
-    // Camera direction — moves around the cube (cube stays at origin)
+    // Camera direction — frames cube at CUBE_OFFSET_X on right side
     camera.position.x = lerp(s0.camera.x, s1.camera.x, frac);
     camera.position.y = lerp(s0.camera.y, s1.camera.y, frac);
     camera.position.z = lerp(s0.camera.z, s1.camera.z, frac);
@@ -1463,7 +1466,7 @@ import * as THREE from './vendor/three.module.min.js';
       lerp(s0.camera.lookZ, s1.camera.lookZ, frac)
     );
 
-    // ── Cube: stationary at origin, rotation only, visibility from shot ──
+    // ── Cube: stationary at CUBE_OFFSET_X, rotation only, visibility from shot ──
     uTime.value = timeSeconds;
     if (cubeGroup) {
       if (!reduceMotion) {
@@ -1473,8 +1476,8 @@ import * as THREE from './vendor/three.module.min.js';
       // Entrance scale only — no shot-based scale (camera distance creates size variation)
       var entranceScale = 0.92 + entranceProgress * 0.08;
       cubeGroup.scale.setScalar(entranceScale);
-      // Cube stays at world origin — never moves
-      cubeGroup.position.set(0, 0, 0);
+      // Cube stays at CUBE_OFFSET_X — right side of composition
+      cubeGroup.position.set(CUBE_OFFSET_X, 0, 0);
     }
 
     // ── Cube visibility from shot ──
