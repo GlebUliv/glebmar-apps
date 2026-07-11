@@ -17,21 +17,22 @@ import * as THREE from './vendor/three.module.min.js';
 
   // ─── Config ───────────────────────────────────────────────
   var DPR_CAP = 2;
-  var CUBE_HALF = 0.55;
+  var CUBE_HALF = 0.25;
   var CUBE_ROT_Y = 0.0000546;          // ~115 s per revolution
   var CUBE_INIT_ROT_Y = 32 * Math.PI / 180;
   var CUBE_INIT_ROT_X = -15 * Math.PI / 180;
   var CUBE_DRIFT_X_AMP = 0.02;
   var CUBE_DRIFT_X_FREQ = 0.00003;
-  var CUBE_OFFSET_X = 1.2;             // Cube shifted right — ~70% of Hero width
+  var CUBE_OFFSET_X = 0.1;
+  var CUBE_OFFSET_Y = 0.35;             // Cube vertical offset
   var BEVEL_WIDTH = CUBE_HALF * 0.12;
   var BEVEL_AMOUNT = CUBE_HALF * 0.05;
   var CORE_RADIUS = CUBE_HALF * 0.22;
 
   var CUBE_COUNTS = {
-    desktop: { surface: 10200, edges: 3060, internal: 3740, core: 1000 },
-    tablet:  { surface: 5700,  edges: 1710, internal: 2090, core: 500  },
-    mobile:  { surface: 3150,  edges: 945,  internal: 1155, core: 250  }
+    desktop: { surface: 10200, edges: 3060, internal: 2620, core: 700 },
+    tablet:  { surface: 5700,  edges: 1710, internal: 1460, core: 350  },
+    mobile:  { surface: 3150,  edges: 945,  internal: 810,  core: 175  }
   };
 
   // ─── Field Config ─────────────────────────────────────────
@@ -408,70 +409,119 @@ import * as THREE from './vendor/three.module.min.js';
   }
 
   // ─── Energy Band — Dominant Volumetric Ribbon ─────────────
-  // ONE primary energy structure. Not many — one.
-  // A thick volumetric ribbon that wraps around the cube.
+  // ONE dominant energy structure with secondary streams.
+  // Magnetic field lines: converge, diverge, split, merge.
+  // Field bends around the cube at (CUBE_OFFSET_X, CUBE_OFFSET_Y).
   // Cross section: dense core → medium → fragmentation → dust
-  // Internal texture: streaks, calm regions, small currents
   // Edges dissolve naturally — no abrupt termination.
 
   var RIBBON = {
-    // Single continuous centerline — wraps around cube, upper-right to lower-left
+    // Dominant stream — top-right, bends around cube, exits bottom-left
+    // Cube is at (0.1, 0.35) with half=0.25 — flow deflects around it
     centerline: [
-      [3.2,  1.8,  0.10],   // upper-right entry
-      [2.6,  1.3,  0.08],   // curve inward
-      [1.9,  0.8,  0.04],   // approach cube region
-      [1.2,  0.4,  0.02],   // beside cube (right)
-      [0.5,  0.15, -0.15],  // pass in front of cube
-      [-0.2, -0.05, -0.25], // wrap behind cube
-      [-0.9, -0.35, -0.10], // emerge left
-      [-1.7, -0.65, 0.05],  // extend lower-left
-      [-2.5, -0.9,  0.12]   // dissolve at edge
+      [3.0,  1.6,  0.12],   // upper-right entry
+      [2.3,  1.1,  0.08],   // curve inward
+      [1.6,  0.7,  0.04],   // approach cube from right
+      [0.8,  0.15, -0.02],  // bend below cube (cube bottom ~0.10)
+      [0.1, -0.15, -0.18],  // pass below-left of cube
+      [-0.7,-0.35, -0.08],  // emerge left, curving down
+      [-1.5,-0.55, 0.04],   // extend lower-left
+      [-2.3,-0.75, 0.10]    // dissolve at edge
     ],
-    // Cross-section radii at each centerline point (thick → thin)
-    coreRadius:    [0.18, 0.20, 0.22, 0.20, 0.16, 0.14, 0.18, 0.15, 0.10],
-    mediumRadius:  [0.42, 0.45, 0.48, 0.45, 0.38, 0.34, 0.40, 0.35, 0.25],
-    fragmentRadius:[0.75, 0.80, 0.85, 0.80, 0.68, 0.60, 0.70, 0.60, 0.42],
-    dustRadius:    [1.10, 1.15, 1.20, 1.15, 0.98, 0.88, 1.00, 0.85, 0.60],
-    // Internal texture — density multipliers along length (streaks vs calm)
-    textureStreaks: [1.3, 0.7, 1.2, 0.8, 1.4, 0.6, 1.1, 0.9, 1.0],
-    speedCoherence: 0.015
+    coreRadius:    [0.14, 0.16, 0.18, 0.15, 0.12, 0.14, 0.12, 0.08],
+    mediumRadius:  [0.34, 0.38, 0.40, 0.34, 0.28, 0.30, 0.26, 0.18],
+    fragmentRadius:[0.62, 0.68, 0.72, 0.60, 0.50, 0.52, 0.46, 0.32],
+    dustRadius:    [0.95, 1.00, 1.05, 0.88, 0.75, 0.76, 0.68, 0.48],
+    textureStreaks: [1.4, 0.6, 1.3, 0.7, 1.5, 0.5, 1.2, 0.9],
+    speedCoherence: 0.008,
+    weight: 0.65
   };
 
-  // Sample a position within the ribbon cross-section
-  // Returns { x, y, z, crossDist, crossTier }
-  // crossTier: 0=core, 1=medium, 2=fragment, 3=dust
+  // Secondary stream A — splits above cube, arcs over top, merges left
+  var RIBBON_STREAM_A = {
+    centerline: [
+      [1.8,  0.9,  0.06],   // branch from main flow
+      [1.2,  1.0,  0.10],   // diverge upward
+      [0.5,  1.1,  0.15],   // arc over cube (cube top ~0.60)
+      [-0.2, 0.9,  0.12],   // descend behind cube
+      [-0.9, 0.5,  0.06],   // merge back toward main
+      [-1.4, 0.1,  0.02]    // rejoin main flow
+    ],
+    coreRadius:    [0.10, 0.11, 0.12, 0.10, 0.09, 0.07],
+    mediumRadius:  [0.24, 0.26, 0.28, 0.24, 0.20, 0.16],
+    fragmentRadius:[0.45, 0.48, 0.50, 0.42, 0.36, 0.28],
+    dustRadius:    [0.70, 0.72, 0.75, 0.62, 0.52, 0.40],
+    textureStreaks: [1.2, 0.8, 1.3, 0.7, 1.1, 0.9],
+    speedCoherence: 0.012,
+    weight: 0.25
+  };
+
+  // Secondary stream B — splits below, curves behind cube (deeper z), merges
+  var RIBBON_STREAM_B = {
+    centerline: [
+      [0.6,  0.0,  -0.10],  // branch from main below cube
+      [0.2, -0.2,  -0.30],  // dive behind cube
+      [-0.3,-0.25, -0.40],  // deep behind
+      [-0.8,-0.15, -0.25],  // curve back toward main
+      [-1.2,-0.25, -0.10]   // merge
+    ],
+    coreRadius:    [0.08, 0.09, 0.10, 0.08, 0.06],
+    mediumRadius:  [0.20, 0.22, 0.24, 0.18, 0.14],
+    fragmentRadius:[0.38, 0.40, 0.42, 0.34, 0.24],
+    dustRadius:    [0.58, 0.60, 0.62, 0.50, 0.36],
+    textureStreaks: [1.1, 0.9, 1.2, 0.8, 1.0],
+    speedCoherence: 0.014,
+    weight: 0.10
+  };
+
+  var RIBBON_STREAMS = [RIBBON, RIBBON_STREAM_A, RIBBON_STREAM_B];
+
+  function pickRibbonStream() {
+    var r = Math.random();
+    var cum = 0;
+    for (var i = 0; i < RIBBON_STREAMS.length; i++) {
+      cum += RIBBON_STREAMS[i].weight;
+      if (r < cum) return RIBBON_STREAMS[i];
+    }
+    return RIBBON;
+  }
+
+  // Sample a position within a ribbon stream cross-section
+  // Returns { x, y, z, crossDist, crossTier, t, texDensity, stream }
   function sampleRibbonPosition() {
+    var stream = pickRibbonStream();
+    var cl = stream.centerline;
     var t = Math.random();
-    var segCount = RIBBON.centerline.length - 1;
+    var segCount = cl.length - 1;
     var segIdx = Math.min(Math.floor(t * segCount), segCount - 1);
     var segT = t * segCount - segIdx;
     var st = segT * segT * (3 - 2 * segT);
 
-    var a = RIBBON.centerline[segIdx];
-    var b = RIBBON.centerline[segIdx + 1];
+    var a = cl[segIdx];
+    var b = cl[segIdx + 1];
 
     var cx = a[0] + (b[0] - a[0]) * st;
     var cy = a[1] + (b[1] - a[1]) * st;
     var cz = a[2] + (b[2] - a[2]) * st;
 
     // Interpolate cross-section radii
-    var coreR   = RIBBON.coreRadius[segIdx]     + (RIBBON.coreRadius[segIdx + 1]     - RIBBON.coreRadius[segIdx])     * st;
-    var medR    = RIBBON.mediumRadius[segIdx]   + (RIBBON.mediumRadius[segIdx + 1]   - RIBBON.mediumRadius[segIdx])   * st;
-    var fragR   = RIBBON.fragmentRadius[segIdx] + (RIBBON.fragmentRadius[segIdx + 1] - RIBBON.fragmentRadius[segIdx]) * st;
-    var dustR   = RIBBON.dustRadius[segIdx]     + (RIBBON.dustRadius[segIdx + 1]     - RIBBON.dustRadius[segIdx])     * st;
+    var coreR = stream.coreRadius[segIdx] + (stream.coreRadius[segIdx + 1] - stream.coreRadius[segIdx]) * st;
+    var medR  = stream.mediumRadius[segIdx] + (stream.mediumRadius[segIdx + 1] - stream.mediumRadius[segIdx]) * st;
+    var fragR = stream.fragmentRadius[segIdx] + (stream.fragmentRadius[segIdx + 1] - stream.fragmentRadius[segIdx]) * st;
+    var dustR = stream.dustRadius[segIdx] + (stream.dustRadius[segIdx + 1] - stream.dustRadius[segIdx]) * st;
 
-    // Texture density at this point along ribbon
-    var texIdx0 = segIdx, texIdx1 = Math.min(segIdx + 1, RIBBON.textureStreaks.length - 1);
-    var texDensity = RIBBON.textureStreaks[texIdx0] + (RIBBON.textureStreaks[texIdx1] - RIBBON.textureStreaks[texIdx0]) * st;
+    // Texture density at this point
+    var texIdx0 = segIdx, texIdx1 = Math.min(segIdx + 1, stream.textureStreaks.length - 1);
+    var texDensity = stream.textureStreaks[texIdx0] + (stream.textureStreaks[texIdx1] - stream.textureStreaks[texIdx0]) * st;
 
-    // Pick cross-section tier based on probability
-    // 20% core, 35% medium, 30% fragment, 15% dust
+    // Cross-section tier: 25% core, 35% medium, 25% fragment, 15% dust
+    // Denser center than before, less dust → more negative space
     var tierRoll = Math.random();
     var crossDist, crossTier;
-    if (tierRoll < 0.20) {
-      crossDist = Math.random() * coreR;
+    if (tierRoll < 0.25) {
+      crossDist = Math.pow(Math.random(), 0.7) * coreR;
       crossTier = 0;
-    } else if (tierRoll < 0.55) {
+    } else if (tierRoll < 0.60) {
       crossDist = coreR + Math.random() * (medR - coreR);
       crossTier = 1;
     } else if (tierRoll < 0.85) {
@@ -482,16 +532,16 @@ import * as THREE from './vendor/three.module.min.js';
       crossTier = 3;
     }
 
-    // Apply texture density modulation — denser streaks attract particles
-    if (Math.random() > texDensity * 0.8 && crossTier < 2) {
-      crossDist *= 1.3; // push toward edge in calm regions
+    // Texture modulation — calm regions push particles outward
+    if (Math.random() > texDensity * 0.85 && crossTier < 2) {
+      crossDist *= 1.35;
     }
 
-    // Random direction in cross-section plane
+    // Cross-section offset — flattened in y, thin in z
     var angle = Math.random() * Math.PI * 2;
     var dx = Math.cos(angle) * crossDist;
-    var dy = Math.sin(angle) * crossDist * 0.7; // slightly flattened
-    var dz = Math.sin(angle) * crossDist * 0.3; // thin in z
+    var dy = Math.sin(angle) * crossDist * 0.65;
+    var dz = Math.sin(angle) * crossDist * 0.25;
 
     return {
       x: cx + dx,
@@ -500,7 +550,8 @@ import * as THREE from './vendor/three.module.min.js';
       crossDist: crossDist,
       crossTier: crossTier,
       t: t,
-      texDensity: texDensity
+      texDensity: texDensity,
+      stream: stream
     };
   }
 
@@ -1019,8 +1070,9 @@ import * as THREE from './vendor/three.module.min.js';
           // Depth layer controls thickness
           thickOff = layer.thickBase + gaussian() * layer.thickRange;
 
-          // Coherent speed along ribbon
-          flowSpeed = config.baseSpeed * (1.0 - RIBBON.speedCoherence * 0.5 + Math.random() * RIBBON.speedCoherence);
+          // Coherent speed — particles in same stream move together
+          var sc = rpos.stream.speedCoherence;
+          flowSpeed = config.baseSpeed * (1.0 - sc * 0.5 + Math.random() * sc);
 
           light = lightFieldAt(rpos.x, rpos.y, rpos.z);
           accepted = true;
@@ -1089,7 +1141,8 @@ import * as THREE from './vendor/three.module.min.js';
           hRadius = Math.max(config.radiusMin, Math.min(config.radiusMax, hStream.radius));
           hWidth = gaussian() * 0.04;
           hThick = hLayer.thickBase + gaussian() * hLayer.thickRange * 0.5;
-          hSpeed = config.baseSpeed * (1.0 - RIBBON.speedCoherence * 0.5 + Math.random() * RIBBON.speedCoherence);
+          var hSC = hRpos.stream.speedCoherence;
+          hSpeed = config.baseSpeed * (1.0 - hSC * 0.5 + Math.random() * hSC);
           hAccepted = true;
           break;
         }
@@ -1434,7 +1487,7 @@ import * as THREE from './vendor/three.module.min.js';
         cubeGroup.rotation.y = CUBE_INIT_ROT_Y;
         cubeGroup.rotation.x = CUBE_INIT_ROT_X;
         cubeGroup.scale.setScalar(c.cubeScale);
-        cubeGroup.position.set(CUBE_OFFSET_X, 0, 0);
+        cubeGroup.position.set(CUBE_OFFSET_X, CUBE_OFFSET_Y, 0);
       }
       for (var ci = 0; ci < cubeOpacityRefs.length; ci++) {
         cubeOpacityRefs[ci].uniform.value = cubeOpacityRefs[ci].base * c.cubeVisibility;
@@ -1477,7 +1530,7 @@ import * as THREE from './vendor/three.module.min.js';
       var entranceScale = 0.92 + entranceProgress * 0.08;
       cubeGroup.scale.setScalar(entranceScale);
       // Cube stays at CUBE_OFFSET_X — right side of composition
-      cubeGroup.position.set(CUBE_OFFSET_X, 0, 0);
+      cubeGroup.position.set(CUBE_OFFSET_X, CUBE_OFFSET_Y, 0);
     }
 
     // ── Cube visibility from shot ──
