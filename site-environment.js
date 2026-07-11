@@ -72,9 +72,9 @@ import * as THREE from './vendor/three.module.min.js';
 };
 
   var FIELD_COUNTS = {
-  desktop: { primary: 24000, secondary: 11000, dust: 400 },   // БЫЛО 800
-  tablet:  { primary: 14000, secondary: 6500,  dust: 200 },   // БЫЛО 400
-  mobile:  { primary: 8000,  secondary: 3500,  dust: 100 }    // БЫЛО 200
+  desktop: { primary: 32000, secondary: 16000, dust: 600 },
+  tablet:  { primary: 20000, secondary: 10000, dust: 300 },
+  mobile:  { primary: 12000, secondary: 6000,  dust: 150 }
 };
 
   // ─── Colors ───────────────────────────────────────────────
@@ -104,7 +104,7 @@ import * as THREE from './vendor/three.module.min.js';
       cubeVisibility: 1.0,
       fieldOpacity: 1.0,
       dustOpacity: 0.9,
-      scrollDispersion: 0.02
+      scrollDispersion: 0.01
     },
     { // Shot 03 — Principles
       // Pull back, move to side — cube becomes secondary, negative space
@@ -112,7 +112,7 @@ import * as THREE from './vendor/three.module.min.js';
       cubeVisibility: 0.75,
       fieldOpacity: 0.80,
       dustOpacity: 0.75,
-      scrollDispersion: 0.05
+      scrollDispersion: 0.03
     },
     { // Shot 04 — Products
       // Move to another side, closer — reconnect with sculpture
@@ -120,7 +120,7 @@ import * as THREE from './vendor/three.module.min.js';
       cubeVisibility: 0.90,
       fieldOpacity: 0.90,
       dustOpacity: 0.80,
-      scrollDispersion: 0.08
+      scrollDispersion: 0.05
     },
     { // Shot 05 — Closing
       // Pull far back, slightly above — cube nearly disappears
@@ -128,7 +128,7 @@ import * as THREE from './vendor/three.module.min.js';
       cubeVisibility: 0.30,
       fieldOpacity: 0.40,
       dustOpacity: 0.50,
-      scrollDispersion: 0.12
+      scrollDispersion: 0.08
     }
   ];
 
@@ -1396,7 +1396,7 @@ var FLOW_C = {
 
         density = totalDensityAt(rpos.x, rpos.y, rpos.z);
         // Cross-section tier affects acceptance — core always accepted, dust rarely
-        var tierAccept = [0.98, 0.85, 0.40, 0.12][rpos.crossTier];
+        var tierAccept = [1.0, 0.95, 0.75, 0.40][rpos.crossTier];
         if (Math.random() < density * tierAccept) {
           var stream = worldToStream(rpos.x, rpos.y, rpos.z, rotMat, bRatio);
           theta = stream.theta;
