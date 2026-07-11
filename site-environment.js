@@ -255,6 +255,65 @@ import * as THREE from './vendor/three.module.min.js';
     return Math.min(1.0, d);
   }
 
+  // ─── Light Field — Continuous Light Hierarchy ────────────
+  // The light field controls brightness, opacity, size, and highlight
+  // probability for every particle. Particles do NOT decide their own
+  // brightness — they sample this field.
+  //
+  // Zone A: Main highlight — upper-right, highest intensity
+  // Zone B: Secondary highlight — near cube, supports cube emergence
+  // Zone C: Transition — soft, wide, no sharp falloff
+  // Zone D: Dark region — very low intensity, negative space
+  //
+  // Brightness hierarchy target:
+  //   5%  very bright (Zone A core)
+  //  15%  bright     (Zone A medium / Zone B core)
+  //  35%  medium     (Zone B/C)
+  //  45%  dark       (Zone D / fragmentation)
+
+  var LIGHT_ZONES = [
+    { // Zone A — main highlight, upper-right
+      cx: 2.2, cy: 1.2, cz: 0,
+      radius: 2.0,
+      intensity: 1.0,
+      falloff: 1.6
+    },
+    { // Zone B — secondary highlight, near cube
+      cx: 0.3, cy: -0.1, cz: 0,
+      radius: 1.2,
+      intensity: 0.65,
+      falloff: 1.3
+    },
+    { // Zone C — transition, soft, wide
+      cx: -0.8, cy: -0.8, cz: 0,
+      radius: 2.5,
+      intensity: 0.35,
+      falloff: 2.2
+    }
+    // Zone D is implicit — everywhere not covered by A/B/C is dark (0.02 baseline)
+  ];
+
+  function lightFieldAt(x, y, z) {
+    var light = 0.02; // Zone D baseline — near darkness
+    for (var i = 0; i < LIGHT_ZONES.length; i++) {
+      var z_ = LIGHT_ZONES[i];
+      var dx = x - z_.cx, dy = y - z_.cy, dz = z - z_.cz;
+      var dist = Math.sqrt(dx * dx + dy * dy + dz * dz);
+      var contribution = z_.intensity * Math.exp(-(dist * dist) / (z_.radius * z_.falloff));
+      light += contribution;
+    }
+    return Math.min(1.0, light);
+  }
+
+  // Classify light intensity into hierarchy tiers
+  // Returns: 0=dark, 1=medium, 2=bright, 3=very bright
+  function lightTier(light) {
+    if (light > 0.75) return 3; // ~5% very bright
+    if (light > 0.45) return 2; // ~15% bright
+    if (light > 0.15) return 1; // ~35% medium
+    return 0;                    // ~45% dark
+  }
+
   // ─── Cube Shaders (LOCKED — unchanged from V1) ────────────
   var cubeVertexShader = [
     "attribute float size;",
@@ -716,11 +775,9 @@ import * as THREE from './vendor/three.module.min.js';
     var bRatio = config.radiusBRatio;
     var el = rotMat.elements;
 
-    // Importance sampling: generate candidate, compute world position,
-    // evaluate density field, accept if random < density.
-    // Zero density → no particles. High density → many particles.
+    // Importance sampling from density field + light field sampling
     for (var i = 0; i < mainCount; i++) {
-      var theta = 0, streamRadius = 0, widthOff = 0, thickOff = 0, density = 0;
+      var theta = 0, streamRadius = 0, widthOff = 0, thickOff = 0, density = 0, light = 0;
       var accepted = false;
 
       for (var attempt = 0; attempt < 30; attempt++) {
@@ -729,7 +786,6 @@ import * as THREE from './vendor/three.module.min.js';
         widthOff = gaussian() * halfWidth * 0.65;
         thickOff = gaussian() * halfThickness * 0.65;
 
-        // Compute world position (matching shader math, without per-particle noise)
         var cosT = Math.cos(theta), sinT = Math.sin(theta);
         var lx = streamRadius * cosT;
         var ly = streamRadius * bRatio * sinT;
@@ -737,7 +793,6 @@ import * as THREE from './vendor/three.module.min.js';
         var wy = el[1] * lx + el[4] * ly;
         var wz = el[2] * lx + el[5] * ly;
 
-        // Add width offset contribution (approximate normal direction)
         var nLen = Math.sqrt(bRatio * bRatio * cosT * cosT + sinT * sinT);
         if (nLen > 1e-6) {
           var nlx = bRatio * cosT / nLen, nly = sinT / nLen;
@@ -748,20 +803,46 @@ import * as THREE from './vendor/three.module.min.js';
 
         density = totalDensityAt(wx, wy, wz);
         if (Math.random() < density) {
+          light = lightFieldAt(wx, wy, wz);
           accepted = true;
           break;
         }
       }
 
       if (!accepted) {
-        // Particle rejected by density field — assign to dust tier (very dim)
         density = 0.08;
+        // Compute light at last position anyway
+        var cosT2 = Math.cos(theta), sinT2 = Math.sin(theta);
+        var lx2 = streamRadius * cosT2;
+        var ly2 = streamRadius * bRatio * sinT2;
+        var wx2 = el[0] * lx2 + el[3] * ly2;
+        var wy2 = el[1] * lx2 + el[4] * ly2;
+        var wz2 = el[2] * lx2 + el[5] * ly2;
+        light = lightFieldAt(wx2, wy2, wz2);
       }
 
       var c = colorPicker();
-      // Brightness and size proportional to local density
-      // High density → bright, large particles (mass core)
-      // Low density → dim, small particles (fragmentation/dust)
+      var tier = lightTier(light);
+      // Brightness controlled by light field, NOT random
+      // Tier 3 (very bright): 0.90-1.0
+      // Tier 2 (bright):      0.65-0.85
+      // Tier 1 (medium):       0.35-0.55
+      // Tier 0 (dark):         0.08-0.20
+      var brightness, sizeMul;
+      if (tier === 3) {
+        brightness = 0.90 + light * 0.10;
+        sizeMul = 1.0;
+      } else if (tier === 2) {
+        brightness = 0.55 + light * 0.30;
+        sizeMul = 0.75;
+      } else if (tier === 1) {
+        brightness = 0.25 + light * 0.30;
+        sizeMul = 0.5;
+      } else {
+        brightness = 0.05 + light * 0.15;
+        sizeMul = 0.3;
+      }
+
       particles.push({
         streamRadius: streamRadius,
         streamPos: theta / (Math.PI * 2),
@@ -770,20 +851,22 @@ import * as THREE from './vendor/three.module.min.js';
         thicknessOffset: thickOff,
         phase: Math.random() * Math.PI * 2,
         speed: config.baseSpeed * (0.96 + Math.random() * 0.08),
-        size: (isPrimary ? 0.3 : 0.2) + density * (isPrimary ? 0.8 : 0.7),
-        brightness: (isPrimary ? 0.30 : 0.25) + density * (isPrimary ? 0.65 : 0.60),
+        size: (isPrimary ? 0.3 : 0.2) + density * (isPrimary ? 0.8 : 0.7) * sizeMul,
+        brightness: brightness,
         color: c,
         densityBias: density,
         isHighlight: false
       });
     }
 
-    // Highlights — only in high-density cores (density > 0.4)
+    // Highlights — exist because LIGHT exists, not random
+    // Only spawn where light field is bright enough (light > 0.5)
+    var highlightsGenerated = 0;
     for (var j = 0; j < highlightCount; j++) {
-      var theta = 0, streamRadius = 0, widthOff = 0, thickOff = 0, density = 0;
+      var theta = 0, streamRadius = 0, widthOff = 0, thickOff = 0, density = 0, light = 0;
       var accepted = false;
 
-      for (var attempt = 0; attempt < 40; attempt++) {
+      for (var attempt = 0; attempt < 50; attempt++) {
         theta = Math.random() * Math.PI * 2;
         streamRadius = config.radiusMin + Math.random() * radiusRange;
         widthOff = gaussian() * halfWidth * 0.25;
@@ -797,20 +880,20 @@ import * as THREE from './vendor/three.module.min.js';
         var wz = el[2] * lx + el[5] * ly;
 
         density = totalDensityAt(wx, wy, wz);
-        if (density > 0.4 && Math.random() < density) {
+        light = lightFieldAt(wx, wy, wz);
+        // Highlights only where light is strong AND density exists
+        if (light > 0.5 && density > 0.3 && Math.random() < light * density) {
           accepted = true;
           break;
         }
       }
 
       if (!accepted) {
-        theta = Math.random() * Math.PI * 2;
-        streamRadius = config.radiusMin + Math.random() * radiusRange;
-        widthOff = gaussian() * halfWidth * 0.25;
-        thickOff = gaussian() * halfThickness * 0.25;
-        density = 0.3;
+        // Skip this highlight — no light to justify it
+        continue;
       }
 
+      highlightsGenerated++;
       var cH = pickHighlightColor();
       particles.push({
         streamRadius: streamRadius,
@@ -820,8 +903,8 @@ import * as THREE from './vendor/three.module.min.js';
         thicknessOffset: thickOff,
         phase: Math.random() * Math.PI * 2,
         speed: config.baseSpeed * (0.96 + Math.random() * 0.08),
-        size: 0.6 + density * 0.7,
-        brightness: 0.80 + density * 0.20,
+        size: 0.6 + light * 0.7,
+        brightness: 0.80 + light * 0.20,
         color: cH,
         densityBias: density,
         isHighlight: true
@@ -942,32 +1025,31 @@ import * as THREE from './vendor/three.module.min.js';
     var ph = new Float32Array(count);
     var br = new Float32Array(count);
 
-    // Dust uses same density field — concentrated near shapes, sparse in voids
+    // Dust uses same density field + light field for brightness
     for (var i = 0; i < count; i++) {
-      var x, y, zOff, density = 0;
+      var x, y, zOff, density = 0, light = 0;
       var accepted = false;
 
       for (var attempt = 0; attempt < 20; attempt++) {
-        // Sample in world space across a broad region
         x = (Math.random() - 0.5) * 8.0;
         y = (Math.random() - 0.5) * 5.0;
         zOff = (Math.random() - 0.5) * 1.5;
         density = totalDensityAt(x, y, zOff);
-        // Accept with lower threshold — dust fills medium and low density
         if (Math.random() < density * 0.5 + 0.05) {
+          light = lightFieldAt(x, y, zOff);
           accepted = true;
           break;
         }
       }
 
       if (!accepted) {
-        // Fallback — sparse random in outer region
         var r = 2.5 + Math.random() * 2.5;
         var theta = Math.random() * Math.PI * 2;
         x = r * Math.cos(theta);
         y = r * 0.5 * Math.sin(theta);
         zOff = (Math.random() - 0.5) * 1.5;
         density = 0.05;
+        light = lightFieldAt(x, y, zOff);
       }
 
       pos[i * 3] = x;
@@ -977,9 +1059,9 @@ import * as THREE from './vendor/three.module.min.js';
       var colorRoll = Math.random();
       var color = colorRoll < 0.65 ? COLOR_NAVY : (colorRoll < 0.90 ? COLOR_GREEN : COLOR_PALE_GREEN);
       col[i * 3] = color[0]; col[i * 3 + 1] = color[1]; col[i * 3 + 2] = color[2];
-      sz[i] = 0.12 + density * 0.15;
+      sz[i] = 0.10 + light * 0.15;
       ph[i] = Math.random() * Math.PI * 2;
-      br[i] = 0.10 + density * 0.15;
+      br[i] = 0.05 + light * 0.15;
     }
 
     var geo = new THREE.BufferGeometry();
