@@ -164,6 +164,7 @@ import * as THREE from './vendor/three.module.min.js';
   var uEntranceProgress = { value: 0 };
   var uLightDebug = { value: 0 };    // 1.0 = grayscale lighting debug
   var uMaterialDebug = { value: 0 }; // 1.0 = material color debug
+  var uEmissionDebug = { value: 0 }; // 1.0 = emission-only debug
 
   // ─── Helpers ──────────────────────────────────────────────
   function getDevice() {
@@ -659,32 +660,40 @@ import * as THREE from './vendor/three.module.min.js';
   // ─── GLSL Material Functions (shared by all shaders) ──────
   var glslMaterialResponse = [
     "void materialResponse(float matId, float light, float widthFactor,",
-    "  out float brightness, out float sizeMul, out float saturation, out float softness) {",
+    "  out float diffuse, out float emission, out float sizeMul,",
+    "  out float saturation, out float softness) {",
     "  if (matId < 0.5) {",
-    "    brightness = light * 1.5 + 0.25;",
+    "    diffuse = light * 1.5;",
+    "    emission = 0.90 + light * 0.40;",
     "    sizeMul = 1.3;  saturation = 0.8;  softness = 0.0;",
     "  } else if (matId < 1.5) {",
     "    float resp = mix(0.4, 1.2, widthFactor);",
-    "    brightness = light * resp + 0.05;",
+    "    diffuse = light * resp + 0.05;",
+    "    emission = mix(0.15, 0.75, widthFactor) * (0.4 + light * 0.6);",
     "    sizeMul = mix(0.7, 1.2, widthFactor);",
     "    saturation = 1.0;  softness = 0.10;",
     "  } else if (matId < 2.5) {",
-    "    brightness = light * 0.6;",
+    "    diffuse = light * 0.6;",
+    "    emission = 0.02 + light * 0.10;",
     "    sizeMul = 0.6;  saturation = 0.7;  softness = 0.15;",
     "  } else if (matId < 3.5) {",
-    "    brightness = light * 0.2;",
+    "    diffuse = light * 0.2;",
+    "    emission = light * 0.03;",
     "    sizeMul = 0.5;  saturation = 0.5;  softness = 0.12;",
     "  } else if (matId < 4.5) {",
-    "    brightness = light * 1.2;",
+    "    diffuse = light * 1.2;",
+    "    emission = 0.10 + light * 0.20;",
     "    sizeMul = 1.0;  saturation = 1.0;  softness = 0.08;",
     "  } else if (matId < 5.5) {",
-    "    brightness = light * 0.5 + 0.03;",
+    "    diffuse = light * 0.5 + 0.03;",
+    "    emission = 0.03 + light * 0.09;",
     "    sizeMul = 0.7;  saturation = 0.6;  softness = 0.15;",
     "  } else {",
-    "    brightness = light * 1.3 + 0.15;",
+    "    diffuse = light * 1.3;",
+    "    emission = 0.75 + light * 0.45;",
     "    sizeMul = 1.1;  saturation = 0.9;  softness = 0.0;",
     "  }",
-    "  brightness = clamp(brightness, 0.0, 1.0);",
+    "  diffuse = clamp(diffuse, 0.0, 1.0);",
     "}"
   ].join("\n");
 
@@ -713,15 +722,16 @@ import * as THREE from './vendor/three.module.min.js';
     "uniform float uScale;",
     "uniform float uReduceMotion;",
     "varying vec3 vColor;",
-    "varying float vBrightness;",
+    "varying float vDiffuse;",
+    "varying float vEmission;",
     "varying float vSaturation;",
     "varying float vSoftness;",
     "varying float vMaterialId;",
     "void main() {",
     "  vColor = colorMix;",
     "  vMaterialId = surfaceType;",
-    "  float matBright, matSize, matSat, matSoft;",
-    "  materialResponse(surfaceType, brightness, 1.0, matBright, matSize, matSat, matSoft);",
+    "  float matDiffuse, matEmission, matSize, matSat, matSoft;",
+    "  materialResponse(surfaceType, brightness, 1.0, matDiffuse, matEmission, matSize, matSat, matSoft);",
     "  float shimmer = uReduceMotion > 0.5 ? 0.0 : sin(uTime * 0.20 + phase) * 0.0025;",
     "  vec3 dir = normalize(position + vec3(0.001, 0.001, 0.001));",
     "  vec3 transformed = position + dir * shimmer;",
@@ -730,7 +740,8 @@ import * as THREE from './vendor/three.module.min.js';
     "  float depthFactor = smoothstep(3.5, 6.5, depth + depthBias);",
     "  float sizeScale = 1.0 - depthFactor * 0.35;",
     "  gl_PointSize = max(1.0, size * uScale * sizeScale * matSize / depth);",
-    "  vBrightness = matBright * (1.0 - depthFactor * 0.30);",
+    "  vDiffuse = matDiffuse * (1.0 - depthFactor * 0.30);",
+    "  vEmission = matEmission * (1.0 - depthFactor * 0.15);",
     "  vSaturation = matSat;",
     "  vSoftness = matSoft;",
     "  gl_Position = projectionMatrix * mvPosition;",
@@ -740,13 +751,15 @@ import * as THREE from './vendor/three.module.min.js';
   var cubeFragmentShader = [
     glslMaterialDebugColor,
     "varying vec3 vColor;",
-    "varying float vBrightness;",
+    "varying float vDiffuse;",
+    "varying float vEmission;",
     "varying float vSaturation;",
     "varying float vSoftness;",
     "varying float vMaterialId;",
     "uniform float uOpacity;",
     "uniform float uLightDebug;",
     "uniform float uMaterialDebug;",
+    "uniform float uEmissionDebug;",
     "void main() {",
     "  vec2 coord = gl_PointCoord - vec2(0.5);",
     "  float dist = length(coord);",
@@ -756,10 +769,14 @@ import * as THREE from './vendor/three.module.min.js';
     "  if (uMaterialDebug > 0.5) {",
     "    gl_FragColor = vec4(materialDebugColor(vMaterialId), alpha);",
     "  } else if (uLightDebug > 0.5) {",
-    "    gl_FragColor = vec4(vec3(vBrightness), alpha);",
+    "    gl_FragColor = vec4(vec3(vDiffuse), alpha);",
+    "  } else if (uEmissionDebug > 0.5) {",
+    "    gl_FragColor = vec4(vec3(vEmission), alpha);",
     "  } else {",
-    "    vec3 col = mix(vec3(dot(vColor, vec3(0.299, 0.587, 0.114))), vColor, vSaturation);",
-    "    gl_FragColor = vec4(col * vBrightness, alpha * uOpacity);",
+    "    vec3 satColor = mix(vec3(dot(vColor, vec3(0.299, 0.587, 0.114))), vColor, vSaturation);",
+    "    vec3 diffuseColor = satColor * vDiffuse;",
+    "    vec3 emissiveColor = mix(vColor, vec3(0.7, 0.95, 0.8), 0.5) * vEmission;",
+    "    gl_FragColor = vec4(diffuseColor + emissiveColor, alpha * uOpacity);",
     "  }",
     "}"
   ].join("\n");
@@ -767,13 +784,15 @@ import * as THREE from './vendor/three.module.min.js';
   var cubeHighlightFragmentShader = [
     glslMaterialDebugColor,
     "varying vec3 vColor;",
-    "varying float vBrightness;",
+    "varying float vDiffuse;",
+    "varying float vEmission;",
     "varying float vSaturation;",
     "varying float vSoftness;",
     "varying float vMaterialId;",
     "uniform float uOpacity;",
     "uniform float uLightDebug;",
     "uniform float uMaterialDebug;",
+    "uniform float uEmissionDebug;",
     "void main() {",
     "  vec2 coord = gl_PointCoord - vec2(0.5);",
     "  float dist = length(coord);",
@@ -783,10 +802,14 @@ import * as THREE from './vendor/three.module.min.js';
     "  if (uMaterialDebug > 0.5) {",
     "    gl_FragColor = vec4(materialDebugColor(vMaterialId), alpha);",
     "  } else if (uLightDebug > 0.5) {",
-    "    gl_FragColor = vec4(vec3(vBrightness), alpha);",
+    "    gl_FragColor = vec4(vec3(vDiffuse), alpha);",
+    "  } else if (uEmissionDebug > 0.5) {",
+    "    gl_FragColor = vec4(vec3(vEmission), alpha);",
     "  } else {",
-    "    vec3 col = mix(vec3(dot(vColor, vec3(0.299, 0.587, 0.114))), vColor, vSaturation);",
-    "    gl_FragColor = vec4(col * vBrightness * 1.3, alpha * uOpacity);",
+    "    vec3 satColor = mix(vec3(dot(vColor, vec3(0.299, 0.587, 0.114))), vColor, vSaturation);",
+    "    vec3 diffuseColor = satColor * vDiffuse;",
+    "    vec3 emissiveColor = mix(vColor, vec3(0.8, 0.98, 0.9), 0.6) * vEmission;",
+    "    gl_FragColor = vec4(diffuseColor + emissiveColor, alpha * uOpacity);",
     "  }",
     "}"
   ].join("\n");
@@ -976,7 +999,8 @@ import * as THREE from './vendor/three.module.min.js';
       uniforms: {
         uTime: uTime, uScale: uScaleGlobal,
         uOpacity: { value: 0.92 }, uReduceMotion: uReduceMotion,
-        uLightDebug: uLightDebug, uMaterialDebug: uMaterialDebug
+        uLightDebug: uLightDebug, uMaterialDebug: uMaterialDebug,
+        uEmissionDebug: uEmissionDebug
       },
       vertexShader: cubeVertexShader,
       fragmentShader: cubeFragmentShader,
@@ -998,7 +1022,8 @@ import * as THREE from './vendor/three.module.min.js';
       uniforms: {
         uTime: uTime, uScale: uScaleGlobal,
         uOpacity: { value: 0.40 }, uReduceMotion: uReduceMotion,
-        uLightDebug: uLightDebug, uMaterialDebug: uMaterialDebug
+        uLightDebug: uLightDebug, uMaterialDebug: uMaterialDebug,
+        uEmissionDebug: uEmissionDebug
       },
       vertexShader: cubeVertexShader,
       fragmentShader: cubeHighlightFragmentShader,
@@ -1044,7 +1069,8 @@ import * as THREE from './vendor/three.module.min.js';
     "uniform float uHalfWidth;",
     "uniform mat3 uRotation;",
     "varying vec3 vColor;",
-    "varying float vBrightness;",
+    "varying float vDiffuse;",
+    "varying float vEmission;",
     "varying float vSaturation;",
     "varying float vSoftness;",
     "varying float vMaterialId;",
@@ -1101,13 +1127,15 @@ import * as THREE from './vendor/three.module.min.js';
     "  float distToCenter = length(mvPosition.xy);",
     "  float clarityFactor = smoothstep(0.40, 1.1, distToCenter);",
     "  float frontWeight = smoothstep(-0.15, 0.35, zDiff);",
-    // Material response — material defines brightness/size/saturation/softness
-    "  float matBright, matSize, matSat, matSoft;",
-    "  materialResponse(aMaterialId, aBrightness, widthFactor, matBright, matSize, matSat, matSoft);",
+    // Material response — separate diffuse and emission
+    "  float matDiffuse, matEmission, matSize, matSat, matSoft;",
+    "  materialResponse(aMaterialId, aBrightness, widthFactor, matDiffuse, matEmission, matSize, matSat, matSoft);",
     "  vColor = aColorMix;",
     "  vMaterialId = aMaterialId;",
-    "  vBrightness = matBright * densityMod * widthFactor;",
-    "  vBrightness *= mix(1.0, mix(0.20, 1.0, clarityFactor), frontWeight);",
+    "  float clarityMod = mix(1.0, mix(0.20, 1.0, clarityFactor), frontWeight);",
+    "  vDiffuse = matDiffuse * densityMod * widthFactor * clarityMod;",
+    // Stream emission: center emits more, edges less, density reinforces
+    "  vEmission = matEmission * widthFactor * densityMod * clarityMod;",
     "  vSaturation = matSat;",
     "  vSoftness = matSoft;",
     // Depth attenuation
@@ -1121,13 +1149,15 @@ import * as THREE from './vendor/three.module.min.js';
   var fieldFragmentShader = [
     glslMaterialDebugColor,
     "varying vec3 vColor;",
-    "varying float vBrightness;",
+    "varying float vDiffuse;",
+    "varying float vEmission;",
     "varying float vSaturation;",
     "varying float vSoftness;",
     "varying float vMaterialId;",
     "uniform float uOpacity;",
     "uniform float uLightDebug;",
     "uniform float uMaterialDebug;",
+    "uniform float uEmissionDebug;",
     "void main() {",
     "  vec2 coord = gl_PointCoord - vec2(0.5);",
     "  float dist = length(coord);",
@@ -1137,10 +1167,14 @@ import * as THREE from './vendor/three.module.min.js';
     "  if (uMaterialDebug > 0.5) {",
     "    gl_FragColor = vec4(materialDebugColor(vMaterialId), alpha);",
     "  } else if (uLightDebug > 0.5) {",
-    "    gl_FragColor = vec4(vec3(vBrightness), alpha);",
+    "    gl_FragColor = vec4(vec3(vDiffuse), alpha);",
+    "  } else if (uEmissionDebug > 0.5) {",
+    "    gl_FragColor = vec4(vec3(vEmission), alpha);",
     "  } else {",
-    "    vec3 col = mix(vec3(dot(vColor, vec3(0.299, 0.587, 0.114))), vColor, vSaturation);",
-    "    gl_FragColor = vec4(col * vBrightness, alpha * uOpacity);",
+    "    vec3 satColor = mix(vec3(dot(vColor, vec3(0.299, 0.587, 0.114))), vColor, vSaturation);",
+    "    vec3 diffuseColor = satColor * vDiffuse;",
+    "    vec3 emissiveColor = mix(vColor, vec3(0.7, 0.95, 0.8), 0.5) * vEmission;",
+    "    gl_FragColor = vec4(diffuseColor + emissiveColor, alpha * uOpacity);",
     "  }",
     "}"
   ].join("\n");
@@ -1148,13 +1182,15 @@ import * as THREE from './vendor/three.module.min.js';
   var fieldHighlightFragmentShader = [
     glslMaterialDebugColor,
     "varying vec3 vColor;",
-    "varying float vBrightness;",
+    "varying float vDiffuse;",
+    "varying float vEmission;",
     "varying float vSaturation;",
     "varying float vSoftness;",
     "varying float vMaterialId;",
     "uniform float uOpacity;",
     "uniform float uLightDebug;",
     "uniform float uMaterialDebug;",
+    "uniform float uEmissionDebug;",
     "void main() {",
     "  vec2 coord = gl_PointCoord - vec2(0.5);",
     "  float dist = length(coord);",
@@ -1164,10 +1200,14 @@ import * as THREE from './vendor/three.module.min.js';
     "  if (uMaterialDebug > 0.5) {",
     "    gl_FragColor = vec4(materialDebugColor(vMaterialId), alpha);",
     "  } else if (uLightDebug > 0.5) {",
-    "    gl_FragColor = vec4(vec3(vBrightness), alpha);",
+    "    gl_FragColor = vec4(vec3(vDiffuse), alpha);",
+    "  } else if (uEmissionDebug > 0.5) {",
+    "    gl_FragColor = vec4(vec3(vEmission), alpha);",
     "  } else {",
-    "    vec3 col = mix(vec3(dot(vColor, vec3(0.299, 0.587, 0.114))), vColor, vSaturation);",
-    "    gl_FragColor = vec4(col * vBrightness * 1.4, alpha * uOpacity);",
+    "    vec3 satColor = mix(vec3(dot(vColor, vec3(0.299, 0.587, 0.114))), vColor, vSaturation);",
+    "    vec3 diffuseColor = satColor * vDiffuse;",
+    "    vec3 emissiveColor = mix(vColor, vec3(0.85, 0.98, 0.92), 0.7) * vEmission;",
+    "    gl_FragColor = vec4(diffuseColor + emissiveColor, alpha * uOpacity);",
     "  }",
     "}"
   ].join("\n");
@@ -1185,22 +1225,24 @@ import * as THREE from './vendor/three.module.min.js';
     "uniform float uReduceMotion;",
     "uniform float uEntrance;",
     "varying vec3 vColor;",
-    "varying float vBrightness;",
+    "varying float vDiffuse;",
+    "varying float vEmission;",
     "varying float vSaturation;",
     "varying float vSoftness;",
     "varying float vMaterialId;",
     "void main() {",
     "  vColor = aColorMix;",
     "  vMaterialId = aMaterialId;",
-    "  float matBright, matSize, matSat, matSoft;",
-    "  materialResponse(aMaterialId, aBrightness, 1.0, matBright, matSize, matSat, matSoft);",
+    "  float matDiffuse, matEmission, matSize, matSat, matSoft;",
+    "  materialResponse(aMaterialId, aBrightness, 1.0, matDiffuse, matEmission, matSize, matSat, matSoft);",
     "  float drift = uReduceMotion > 0.5 ? 0.0 : sin(uTime * 0.1 + aPhase) * 0.02;",
     "  vec3 pos = position;",
     "  pos.x += drift;",
     "  pos.y += cos(uTime * 0.08 + aPhase) * 0.02;",
     "  pos *= mix(0.75, 1.0, uEntrance);",
     "  vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);",
-    "  vBrightness = matBright;",
+    "  vDiffuse = matDiffuse;",
+    "  vEmission = matEmission;",
     "  vSaturation = matSat;",
     "  vSoftness = matSoft;",
     "  float depth = -mvPosition.z;",
@@ -1213,13 +1255,15 @@ import * as THREE from './vendor/three.module.min.js';
   var dustFragmentShader = [
     glslMaterialDebugColor,
     "varying vec3 vColor;",
-    "varying float vBrightness;",
+    "varying float vDiffuse;",
+    "varying float vEmission;",
     "varying float vSaturation;",
     "varying float vSoftness;",
     "varying float vMaterialId;",
     "uniform float uOpacity;",
     "uniform float uLightDebug;",
     "uniform float uMaterialDebug;",
+    "uniform float uEmissionDebug;",
     "void main() {",
     "  vec2 coord = gl_PointCoord - vec2(0.5);",
     "  float dist = length(coord);",
@@ -1229,10 +1273,14 @@ import * as THREE from './vendor/three.module.min.js';
     "  if (uMaterialDebug > 0.5) {",
     "    gl_FragColor = vec4(materialDebugColor(vMaterialId), alpha);",
     "  } else if (uLightDebug > 0.5) {",
-    "    gl_FragColor = vec4(vec3(vBrightness), alpha);",
+    "    gl_FragColor = vec4(vec3(vDiffuse), alpha);",
+    "  } else if (uEmissionDebug > 0.5) {",
+    "    gl_FragColor = vec4(vec3(vEmission), alpha);",
     "  } else {",
-    "    vec3 col = mix(vec3(dot(vColor, vec3(0.299, 0.587, 0.114))), vColor, vSaturation);",
-    "    gl_FragColor = vec4(col * vBrightness, alpha * uOpacity);",
+    "    vec3 satColor = mix(vec3(dot(vColor, vec3(0.299, 0.587, 0.114))), vColor, vSaturation);",
+    "    vec3 diffuseColor = satColor * vDiffuse;",
+    "    vec3 emissiveColor = vColor * vEmission;",
+    "    gl_FragColor = vec4(diffuseColor + emissiveColor, alpha * uOpacity);",
     "  }",
     "}"
   ].join("\n");
@@ -1499,7 +1547,8 @@ import * as THREE from './vendor/three.module.min.js';
         uniforms: Object.assign({}, sharedUniforms, {
           uCullMode: { value: cullMode },
           uOpacity: { value: opacity },
-          uLightDebug: uLightDebug, uMaterialDebug: uMaterialDebug
+          uLightDebug: uLightDebug, uMaterialDebug: uMaterialDebug,
+          uEmissionDebug: uEmissionDebug
         }),
         vertexShader: fieldVertexShader,
         fragmentShader: isHighlight ? fieldHighlightFragmentShader : fieldFragmentShader,
@@ -1593,7 +1642,8 @@ import * as THREE from './vendor/three.module.min.js';
         uReduceMotion: uReduceMotion,
         uEntrance: uEntranceProgress,
         uOpacity: { value: opacity },
-        uLightDebug: uLightDebug, uMaterialDebug: uMaterialDebug
+        uLightDebug: uLightDebug, uMaterialDebug: uMaterialDebug,
+        uEmissionDebug: uEmissionDebug
       },
       vertexShader: dustVertexShader,
       fragmentShader: dustFragmentShader,
@@ -1704,9 +1754,10 @@ import * as THREE from './vendor/three.module.min.js';
     if (!animating) return;
     rafId = requestAnimationFrame(animate);
 
-    // Lighting debug mode — grayscale only, cube hidden
+    // Debug modes — precedence: material > light > emission > normal
     uLightDebug.value = window.__lightDebug ? 1.0 : 0.0;
     uMaterialDebug.value = window.__materialDebug ? 1.0 : 0.0;
+    uEmissionDebug.value = window.__emissionDebug ? 1.0 : 0.0;
     if (cubeGroup) cubeGroup.visible = !window.__lightDebug;
 
     var dt = lastTime ? Math.min(time - lastTime, 33) : 16;
