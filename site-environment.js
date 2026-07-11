@@ -44,8 +44,8 @@ import * as THREE from './vendor/three.module.min.js';
   radiusMin: 1.35 * CUBE_WIDTH,
   radiusMax: 2.55 * CUBE_WIDTH,
   radiusBRatio: 0.82,
-  width: 0.15,                       // БЫЛО 0.25 → ЕЩЁ УЖЕ
-  thickness: 0.28,
+  width: 0.20,                       // thicker ribbon
+  thickness: 0.40,
   inclX: -18 * Math.PI / 180,
   inclY: 13 * Math.PI / 180,
   inclZ: -10 * Math.PI / 180,
@@ -60,8 +60,8 @@ import * as THREE from './vendor/three.module.min.js';
   radiusMin: 0.90 * CUBE_WIDTH,
   radiusMax: 1.95 * CUBE_WIDTH,
   radiusBRatio: 0.75,
-  width: 0.12,                       // БЫЛО 0.18 → УЖЕ
-  thickness: 0.20,
+  width: 0.16,                       // thicker
+  thickness: 0.30,
   inclX: 5 * Math.PI / 180,
   inclY: -8 * Math.PI / 180,
   inclZ: 18 * Math.PI / 180,
@@ -205,12 +205,12 @@ import * as THREE from './vendor/three.module.min.js';
 
 var SHAPE_B = {
   centerline: [[1.6 + CUBE_OFFSET_X, 0.8 + CUBE_OFFSET_Y, 0.03], [1.2 + CUBE_OFFSET_X, 0.4 + CUBE_OFFSET_Y, 0.0], [CUBE_OFFSET_X, CUBE_OFFSET_Y, 0.0], [-1.2 + CUBE_OFFSET_X, -0.4 + CUBE_OFFSET_Y, 0.0], [-1.6 + CUBE_OFFSET_X, -0.8 + CUBE_OFFSET_Y, 0.03]],
-  width: 0.22, density: 0.5, broken: false, breakPoints: []
+  width: 0.28, density: 0.35, broken: false, breakPoints: []
 };
 
 var SHAPE_C = {
   centerline: [[1.0 + CUBE_OFFSET_X, 0.5 + CUBE_OFFSET_Y, 0.02], [0.6 + CUBE_OFFSET_X, 0.2 + CUBE_OFFSET_Y, 0.0], [CUBE_OFFSET_X, CUBE_OFFSET_Y, 0.0], [-0.6 + CUBE_OFFSET_X, -0.2 + CUBE_OFFSET_Y, 0.0], [-1.0 + CUBE_OFFSET_X, -0.5 + CUBE_OFFSET_Y, 0.02]],
-  width: 0.15, density: 0.3, broken: false, breakPoints: []
+  width: 0.18, density: 0.18, broken: false, breakPoints: []
 };
 
   var ALL_SHAPES = [SHAPE_A, SHAPE_B, SHAPE_C];
@@ -494,27 +494,31 @@ var FLOW_C = {
   centerline: [
     [2.4 + CUBE_OFFSET_X, 1.2 + CUBE_OFFSET_Y, 0.05], [1.8 + CUBE_OFFSET_X, 0.6 + CUBE_OFFSET_Y, 0.0], [CUBE_OFFSET_X, CUBE_OFFSET_Y, 0.0], [-1.8 + CUBE_OFFSET_X, -0.6 + CUBE_OFFSET_Y, 0.0], [-2.4 + CUBE_OFFSET_X, -1.2 + CUBE_OFFSET_Y, 0.05]
   ],
-  coreRadius: [0.06, 0.08, 0.10, 0.08, 0.06],
-  mediumRadius: [0.16, 0.20, 0.24, 0.20, 0.16],
-  fragmentRadius: [0.30, 0.36, 0.42, 0.36, 0.30],
-  dustRadius: [0.46, 0.52, 0.58, 0.52, 0.46],
+  coreRadius: [0.12, 0.15, 0.18, 0.15, 0.12],
+  mediumRadius: [0.30, 0.36, 0.42, 0.36, 0.30],
+  fragmentRadius: [0.52, 0.60, 0.68, 0.60, 0.52],
+  dustRadius: [0.72, 0.80, 0.88, 0.80, 0.72],
   textureStreaks: [1.3, 1.1, 1.4, 1.1, 1.3],
+  veinCount: 3,
+  veinAmplitude: 0.12,
   speedCoherence: 0.005,
-  weight: 0.85
+  weight: 0.88
 };
 
-  // Secondary stream A — subtle accent above main band
+  // Secondary stream A — subtle accent, thinner, same diagonal
   var RIBBON_STREAM_A = {
   centerline: [
     [1.6 + CUBE_OFFSET_X, 0.8 + CUBE_OFFSET_Y, 0.03], [1.2 + CUBE_OFFSET_X, 0.4 + CUBE_OFFSET_Y, 0.0], [CUBE_OFFSET_X, CUBE_OFFSET_Y, 0.0], [-1.2 + CUBE_OFFSET_X, -0.4 + CUBE_OFFSET_Y, 0.0], [-1.6 + CUBE_OFFSET_X, -0.8 + CUBE_OFFSET_Y, 0.03]
   ],
-  coreRadius: [0.04, 0.05, 0.06, 0.05, 0.04],
-  mediumRadius: [0.10, 0.12, 0.14, 0.12, 0.10],
-  fragmentRadius: [0.18, 0.22, 0.26, 0.22, 0.18],
-  dustRadius: [0.28, 0.32, 0.36, 0.32, 0.28],
+  coreRadius: [0.08, 0.10, 0.12, 0.10, 0.08],
+  mediumRadius: [0.18, 0.22, 0.26, 0.22, 0.18],
+  fragmentRadius: [0.32, 0.38, 0.44, 0.38, 0.32],
+  dustRadius: [0.48, 0.54, 0.60, 0.54, 0.48],
   textureStreaks: [1.0, 0.9, 1.1, 0.9, 1.0],
+  veinCount: 2,
+  veinAmplitude: 0.08,
   speedCoherence: 0.008,
-  weight: 0.12
+  weight: 0.10
 };
 
   // Secondary stream B — faint inner trace, barely visible
@@ -522,13 +526,15 @@ var FLOW_C = {
   centerline: [
     [1.0 + CUBE_OFFSET_X, 0.5 + CUBE_OFFSET_Y, 0.02], [0.6 + CUBE_OFFSET_X, 0.2 + CUBE_OFFSET_Y, 0.0], [CUBE_OFFSET_X, CUBE_OFFSET_Y, 0.0], [-0.6 + CUBE_OFFSET_X, -0.2 + CUBE_OFFSET_Y, 0.0], [-1.0 + CUBE_OFFSET_X, -0.5 + CUBE_OFFSET_Y, 0.02]
   ],
-  coreRadius: [0.03, 0.04, 0.05, 0.04, 0.03],
-  mediumRadius: [0.08, 0.10, 0.12, 0.10, 0.08],
-  fragmentRadius: [0.14, 0.18, 0.22, 0.18, 0.14],
-  dustRadius: [0.22, 0.26, 0.30, 0.26, 0.22],
+  coreRadius: [0.06, 0.08, 0.10, 0.08, 0.06],
+  mediumRadius: [0.14, 0.18, 0.22, 0.18, 0.14],
+  fragmentRadius: [0.26, 0.32, 0.38, 0.32, 0.26],
+  dustRadius: [0.40, 0.46, 0.52, 0.46, 0.40],
   textureStreaks: [0.9, 0.8, 1.0, 0.8, 0.9],
+  veinCount: 1,
+  veinAmplitude: 0.05,
   speedCoherence: 0.010,
-  weight: 0.03
+  weight: 0.02
 };
 
   var RIBBON_STREAMS = [RIBBON, RIBBON_STREAM_A, RIBBON_STREAM_B];
@@ -589,6 +595,27 @@ var FLOW_C = {
       crossTier = 3;
     }
 
+    // Continuous density profile: dense center → medium → outer → edge → space
+    // Uses smoothstep for continuous falloff, never abrupt
+    var normDist = crossDist / dustR; // 0 at center, 1 at edge
+    var densityProfile = Math.exp(-normDist * normDist * 2.5); // Gaussian falloff
+
+    // Internal energy veins — longitudinal streaks that merge and separate
+    // Creates perception of energy currents inside one larger structure
+    var veinCount = stream.veinCount || 0;
+    var veinAmp = stream.veinAmplitude || 0;
+    if (veinCount > 0 && crossTier < 2) {
+      var veinMod = 0;
+      for (var vi = 0; vi < veinCount; vi++) {
+        var veinFreq = 2.0 + vi * 1.5;
+        var veinPhase = vi * 1.7;
+        veinMod += Math.sin(t * Math.PI * veinFreq + veinPhase) * (1.0 / veinCount);
+      }
+      // Veins pull particles slightly toward/away from center — subtle
+      crossDist *= (1.0 + veinMod * veinAmp);
+      crossDist = Math.min(crossDist, dustR * 0.95);
+    }
+
     // Texture modulation — calm regions push particles outward
     if (Math.random() > texDensity * 0.92 && crossTier < 2) {
       crossDist *= 1.08;
@@ -597,8 +624,8 @@ var FLOW_C = {
     // Cross-section offset — flattened in y, thin in z
     var angle = Math.random() * Math.PI * 2;
     var dx = Math.cos(angle) * crossDist;
-    var dy = Math.sin(angle) * crossDist * 0.55;
-    var dz = Math.sin(angle) * crossDist * 0.18;
+    var dy = Math.sin(angle) * crossDist * 0.70;
+    var dz = Math.sin(angle) * crossDist * 0.30;
 
     return {
       x: cx + dx,
@@ -606,6 +633,7 @@ var FLOW_C = {
       z: cz + dz,
       crossDist: crossDist,
       crossTier: crossTier,
+      densityProfile: densityProfile,
       t: t,
       texDensity: texDensity,
       stream: stream
@@ -1376,9 +1404,10 @@ var FLOW_C = {
         var rpos = sampleRibbonPosition();
 
         density = totalDensityAt(rpos.x, rpos.y, rpos.z);
-        // Cross-section tier affects acceptance — core always accepted, dust rarely
-        var tierAccept = [1.0, 0.95, 0.75, 0.40][rpos.crossTier];
-        if (Math.random() < density * tierAccept) {
+        // Acceptance: continuous density profile × shape density × tier
+        var tierAccept = [1.0, 0.92, 0.65, 0.25][rpos.crossTier];
+        var profileAccept = rpos.densityProfile;
+        if (Math.random() < density * tierAccept * profileAccept) {
           var stream = worldToStream(rpos.x, rpos.y, rpos.z, rotMat, bRatio);
           theta = stream.theta;
           streamRadius = Math.max(config.radiusMin, Math.min(config.radiusMax, stream.radius));
