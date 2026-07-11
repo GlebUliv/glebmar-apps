@@ -197,26 +197,20 @@ import * as THREE from './vendor/three.module.min.js';
   // Particles are importance-sampled from the density field.
   // If particles were removed, the shapes would still be visible.
 
-  // Shape A: Upper-right, large, powerful, continuous
+  // Shape A: Dominant diagonal band — upper-right → cube → lower-left
   var SHAPE_A = {
-  centerline: [[2.1 + CUBE_OFFSET_X, 0.0 + CUBE_OFFSET_Y, 0], [1.7 + CUBE_OFFSET_X, 0.85 + CUBE_OFFSET_Y, 0.08], [0.4 + CUBE_OFFSET_X, 1.45 + CUBE_OFFSET_Y, 0], [-0.9 + CUBE_OFFSET_X, 1.15 + CUBE_OFFSET_Y, -0.08],
-               [-1.9 + CUBE_OFFSET_X, 0.0 + CUBE_OFFSET_Y, 0], [-1.3 + CUBE_OFFSET_X, -0.95 + CUBE_OFFSET_Y, 0.08], [0.1 + CUBE_OFFSET_X, -1.55 + CUBE_OFFSET_Y, 0], [1.4 + CUBE_OFFSET_X, -1.15 + CUBE_OFFSET_Y, -0.08],
-               [2.1 + CUBE_OFFSET_X, 0.0 + CUBE_OFFSET_Y, 0]],
-  width: 0.5, density: 1.0, broken: false, breakPoints: []
+  centerline: [[2.4 + CUBE_OFFSET_X, 1.2 + CUBE_OFFSET_Y, 0.05], [1.8 + CUBE_OFFSET_X, 0.6 + CUBE_OFFSET_Y, 0.0], [CUBE_OFFSET_X, CUBE_OFFSET_Y, 0.0], [-1.8 + CUBE_OFFSET_X, -0.6 + CUBE_OFFSET_Y, 0.0], [-2.4 + CUBE_OFFSET_X, -1.2 + CUBE_OFFSET_Y, 0.05]],
+  width: 0.35, density: 1.0, broken: false, breakPoints: []
 };
 
 var SHAPE_B = {
-  centerline: [[1.4 + CUBE_OFFSET_X, 0.0 + CUBE_OFFSET_Y, 0.05], [1.1 + CUBE_OFFSET_X, 0.55 + CUBE_OFFSET_Y, 0.08], [0.2 + CUBE_OFFSET_X, 0.95 + CUBE_OFFSET_Y, 0.05], [-0.7 + CUBE_OFFSET_X, 0.65 + CUBE_OFFSET_Y, -0.02],
-               [-1.4 + CUBE_OFFSET_X, 0.0 + CUBE_OFFSET_Y, 0], [-1.0 + CUBE_OFFSET_X, -0.65 + CUBE_OFFSET_Y, 0.05], [0.0 + CUBE_OFFSET_X, -1.05 + CUBE_OFFSET_Y, 0], [0.9 + CUBE_OFFSET_X, -0.85 + CUBE_OFFSET_Y, -0.05],
-               [1.4 + CUBE_OFFSET_X, 0.0 + CUBE_OFFSET_Y, 0.05]],
-  width: 0.35, density: 0.7, broken: false, breakPoints: []
+  centerline: [[1.6 + CUBE_OFFSET_X, 0.8 + CUBE_OFFSET_Y, 0.03], [1.2 + CUBE_OFFSET_X, 0.4 + CUBE_OFFSET_Y, 0.0], [CUBE_OFFSET_X, CUBE_OFFSET_Y, 0.0], [-1.2 + CUBE_OFFSET_X, -0.4 + CUBE_OFFSET_Y, 0.0], [-1.6 + CUBE_OFFSET_X, -0.8 + CUBE_OFFSET_Y, 0.03]],
+  width: 0.22, density: 0.5, broken: false, breakPoints: []
 };
 
 var SHAPE_C = {
-  centerline: [[0.9 + CUBE_OFFSET_X, 0.0 + CUBE_OFFSET_Y, 0.02], [0.7 + CUBE_OFFSET_X, 0.35 + CUBE_OFFSET_Y, 0.05], [0.1 + CUBE_OFFSET_X, 0.65 + CUBE_OFFSET_Y, 0.02], [-0.5 + CUBE_OFFSET_X, 0.45 + CUBE_OFFSET_Y, -0.02],
-               [-1.0 + CUBE_OFFSET_X, 0.0 + CUBE_OFFSET_Y, 0], [-0.7 + CUBE_OFFSET_X, -0.45 + CUBE_OFFSET_Y, 0.03], [-0.1 + CUBE_OFFSET_X, -0.75 + CUBE_OFFSET_Y, 0], [0.5 + CUBE_OFFSET_X, -0.65 + CUBE_OFFSET_Y, -0.03],
-               [0.9 + CUBE_OFFSET_X, 0.0 + CUBE_OFFSET_Y, 0.02]],
-  width: 0.25, density: 0.5, broken: false, breakPoints: []
+  centerline: [[1.0 + CUBE_OFFSET_X, 0.5 + CUBE_OFFSET_Y, 0.02], [0.6 + CUBE_OFFSET_X, 0.2 + CUBE_OFFSET_Y, 0.0], [CUBE_OFFSET_X, CUBE_OFFSET_Y, 0.0], [-0.6 + CUBE_OFFSET_X, -0.2 + CUBE_OFFSET_Y, 0.0], [-1.0 + CUBE_OFFSET_X, -0.5 + CUBE_OFFSET_Y, 0.02]],
+  width: 0.15, density: 0.3, broken: false, breakPoints: []
 };
 
   var ALL_SHAPES = [SHAPE_A, SHAPE_B, SHAPE_C];
@@ -241,7 +235,7 @@ var SHAPE_C = {
         bestT = (i + r.t) / (shape.centerline.length - 1);
       }
     }
-    var d = Math.exp(-(minDist * minDist) / (shape.width * shape.width));
+    var d = Math.exp(-(minDist * minDist) / (shape.width * shape.width * 0.6));
     d *= Math.sin(bestT * Math.PI);
     if (shape.broken) {
       for (var j = 0; j < shape.breakPoints.length; j++) {
@@ -339,31 +333,31 @@ var SHAPE_C = {
   //  45%  dark       (Ambient only / fragmentation)
 
   var LIGHT_ZONES = [
-    { // Key Light — upper-right, strongest contribution
-      cx: 2.2 + CUBE_OFFSET_X, cy: 1.2 + CUBE_OFFSET_Y, cz: 0.3,
-      radius: 2.5,
+    { // Key Light — upper-right end of diagonal band, strongest
+      cx: 2.4 + CUBE_OFFSET_X, cy: 1.2 + CUBE_OFFSET_Y, cz: 0.1,
+      radius: 2.0,
       intensity: 1.0,
-      falloff: 1.5,
+      falloff: 1.2,
       type: "key"
     },
-    { // Fill Light — centered on cube, very soft, low intensity
+    { // Fill Light — centered on cube, tight, reveals band through cube
       cx: CUBE_OFFSET_X, cy: CUBE_OFFSET_Y, cz: 0,
-      radius: 0.8,
-      intensity: 0.30,
-      falloff: 1.0,
+      radius: 0.6,
+      intensity: 0.35,
+      falloff: 0.8,
       type: "fill"
     },
-    { // Rim Light — from left/behind, separates cube from field
-      cx: -1.5 + CUBE_OFFSET_X, cy: 0.5 + CUBE_OFFSET_Y, cz: -0.5,
-      radius: 1.5,
-      intensity: 0.25,
-      falloff: 1.2,
+    { // Rim Light — lower-left end, separates band from background
+      cx: -2.4 + CUBE_OFFSET_X, cy: -1.2 + CUBE_OFFSET_Y, cz: -0.3,
+      radius: 1.2,
+      intensity: 0.20,
+      falloff: 1.0,
       type: "rim"
     },
-    { // Ambient Volume — environment emits light, very soft, large radius
+    { // Ambient Volume — environment, very soft, large radius
       cx: CUBE_OFFSET_X, cy: CUBE_OFFSET_Y, cz: 0,
-      radius: 5.0,
-      intensity: 0.08,
+      radius: 6.0,
+      intensity: 0.05,
       falloff: 3.0,
       type: "ambient"
     }
@@ -422,24 +416,18 @@ var SHAPE_C = {
   // The flow field defines direction, curvature, and strength.
   // Particles never choose independent directions — they sample this field.
 
-  // Flow A: Primary energy river — large, continuous, dominant
+  // Flow A: Primary diagonal — upper-right → cube → lower-left
   var FLOW_A = {
-  centerline: [[2.1 + CUBE_OFFSET_X, 0.0 + CUBE_OFFSET_Y, 0], [1.7 + CUBE_OFFSET_X, 0.85 + CUBE_OFFSET_Y, 0.08], [0.4 + CUBE_OFFSET_X, 1.45 + CUBE_OFFSET_Y, 0], [-0.9 + CUBE_OFFSET_X, 1.15 + CUBE_OFFSET_Y, -0.08],
-               [-1.9 + CUBE_OFFSET_X, 0.0 + CUBE_OFFSET_Y, 0], [-1.3 + CUBE_OFFSET_X, -0.95 + CUBE_OFFSET_Y, 0.08], [0.1 + CUBE_OFFSET_X, -1.55 + CUBE_OFFSET_Y, 0], [1.4 + CUBE_OFFSET_X, -1.15 + CUBE_OFFSET_Y, -0.08],
-               [2.1 + CUBE_OFFSET_X, 0.0 + CUBE_OFFSET_Y, 0]],
-  flowWidth: 0.08, speedCoherence: 0.015, weight: 0.50
+  centerline: [[2.4 + CUBE_OFFSET_X, 1.2 + CUBE_OFFSET_Y, 0.05], [1.8 + CUBE_OFFSET_X, 0.6 + CUBE_OFFSET_Y, 0.0], [CUBE_OFFSET_X, CUBE_OFFSET_Y, 0.0], [-1.8 + CUBE_OFFSET_X, -0.6 + CUBE_OFFSET_Y, 0.0], [-2.4 + CUBE_OFFSET_X, -1.2 + CUBE_OFFSET_Y, 0.05]],
+  flowWidth: 0.06, speedCoherence: 0.015, weight: 0.80
 };
 var FLOW_B = {
-  centerline: [[1.4 + CUBE_OFFSET_X, 0.0 + CUBE_OFFSET_Y, 0.05], [1.1 + CUBE_OFFSET_X, 0.55 + CUBE_OFFSET_Y, 0.08], [0.2 + CUBE_OFFSET_X, 0.95 + CUBE_OFFSET_Y, 0.05], [-0.7 + CUBE_OFFSET_X, 0.65 + CUBE_OFFSET_Y, -0.02],
-               [-1.4 + CUBE_OFFSET_X, 0.0 + CUBE_OFFSET_Y, 0], [-1.0 + CUBE_OFFSET_X, -0.65 + CUBE_OFFSET_Y, 0.05], [0.0 + CUBE_OFFSET_X, -1.05 + CUBE_OFFSET_Y, 0], [0.9 + CUBE_OFFSET_X, -0.85 + CUBE_OFFSET_Y, -0.05],
-               [1.4 + CUBE_OFFSET_X, 0.0 + CUBE_OFFSET_Y, 0.05]],
-  flowWidth: 0.06, speedCoherence: 0.018, weight: 0.35
+  centerline: [[1.6 + CUBE_OFFSET_X, 0.8 + CUBE_OFFSET_Y, 0.03], [1.2 + CUBE_OFFSET_X, 0.4 + CUBE_OFFSET_Y, 0.0], [CUBE_OFFSET_X, CUBE_OFFSET_Y, 0.0], [-1.2 + CUBE_OFFSET_X, -0.4 + CUBE_OFFSET_Y, 0.0], [-1.6 + CUBE_OFFSET_X, -0.8 + CUBE_OFFSET_Y, 0.03]],
+  flowWidth: 0.04, speedCoherence: 0.018, weight: 0.15
 };
 var FLOW_C = {
-  centerline: [[0.9 + CUBE_OFFSET_X, 0.0 + CUBE_OFFSET_Y, 0.02], [0.7 + CUBE_OFFSET_X, 0.35 + CUBE_OFFSET_Y, 0.05], [0.1 + CUBE_OFFSET_X, 0.65 + CUBE_OFFSET_Y, 0.02], [-0.5 + CUBE_OFFSET_X, 0.45 + CUBE_OFFSET_Y, -0.02],
-               [-1.0 + CUBE_OFFSET_X, 0.0 + CUBE_OFFSET_Y, 0], [-0.7 + CUBE_OFFSET_X, -0.45 + CUBE_OFFSET_Y, 0.03], [-0.1 + CUBE_OFFSET_X, -0.75 + CUBE_OFFSET_Y, 0], [0.5 + CUBE_OFFSET_X, -0.65 + CUBE_OFFSET_Y, -0.03],
-               [0.9 + CUBE_OFFSET_X, 0.0 + CUBE_OFFSET_Y, 0.02]],
-  flowWidth: 0.05, speedCoherence: 0.020, weight: 0.15
+  centerline: [[1.0 + CUBE_OFFSET_X, 0.5 + CUBE_OFFSET_Y, 0.02], [0.6 + CUBE_OFFSET_X, 0.2 + CUBE_OFFSET_Y, 0.0], [CUBE_OFFSET_X, CUBE_OFFSET_Y, 0.0], [-0.6 + CUBE_OFFSET_X, -0.2 + CUBE_OFFSET_Y, 0.0], [-1.0 + CUBE_OFFSET_X, -0.5 + CUBE_OFFSET_Y, 0.02]],
+  flowWidth: 0.03, speedCoherence: 0.020, weight: 0.05
 };
 
   var ALL_FLOWS = [FLOW_A, FLOW_B, FLOW_C];
@@ -504,49 +492,43 @@ var FLOW_C = {
 
   var RIBBON = {
   centerline: [
-    [2.1 + CUBE_OFFSET_X, 0.0 + CUBE_OFFSET_Y, 0.0], [1.7 + CUBE_OFFSET_X, 0.85 + CUBE_OFFSET_Y, 0.08], [0.4 + CUBE_OFFSET_X, 1.45 + CUBE_OFFSET_Y, 0.0], [-0.9 + CUBE_OFFSET_X, 1.15 + CUBE_OFFSET_Y, -0.08],
-    [-1.9 + CUBE_OFFSET_X, 0.0 + CUBE_OFFSET_Y, 0.0], [-1.3 + CUBE_OFFSET_X, -0.95 + CUBE_OFFSET_Y, 0.08], [0.1 + CUBE_OFFSET_X, -1.55 + CUBE_OFFSET_Y, 0.0], [1.4 + CUBE_OFFSET_X, -1.15 + CUBE_OFFSET_Y, -0.08],
-    [2.1 + CUBE_OFFSET_X, 0.0 + CUBE_OFFSET_Y, 0.0]
+    [2.4 + CUBE_OFFSET_X, 1.2 + CUBE_OFFSET_Y, 0.05], [1.8 + CUBE_OFFSET_X, 0.6 + CUBE_OFFSET_Y, 0.0], [CUBE_OFFSET_X, CUBE_OFFSET_Y, 0.0], [-1.8 + CUBE_OFFSET_X, -0.6 + CUBE_OFFSET_Y, 0.0], [-2.4 + CUBE_OFFSET_X, -1.2 + CUBE_OFFSET_Y, 0.05]
   ],
-  coreRadius: [0.08, 0.09, 0.10, 0.09, 0.08, 0.09, 0.10, 0.09, 0.08],
-  mediumRadius: [0.20, 0.22, 0.24, 0.22, 0.20, 0.22, 0.24, 0.22, 0.20],
-  fragmentRadius: [0.38, 0.42, 0.45, 0.42, 0.38, 0.42, 0.45, 0.42, 0.38],
-  dustRadius: [0.58, 0.62, 0.65, 0.62, 0.58, 0.62, 0.65, 0.62, 0.58],
-  textureStreaks: [1.2, 1.0, 1.3, 1.1, 1.2, 1.0, 1.3, 1.1, 1.2],
+  coreRadius: [0.06, 0.08, 0.10, 0.08, 0.06],
+  mediumRadius: [0.16, 0.20, 0.24, 0.20, 0.16],
+  fragmentRadius: [0.30, 0.36, 0.42, 0.36, 0.30],
+  dustRadius: [0.46, 0.52, 0.58, 0.52, 0.46],
+  textureStreaks: [1.3, 1.1, 1.4, 1.1, 1.3],
   speedCoherence: 0.005,
-  weight: 0.70
+  weight: 0.85
 };
 
-  // Secondary stream A — splits above cube, arcs over top, merges left
+  // Secondary stream A — subtle accent above main band
   var RIBBON_STREAM_A = {
   centerline: [
-    [1.4 + CUBE_OFFSET_X, 0.0 + CUBE_OFFSET_Y, 0.05], [1.1 + CUBE_OFFSET_X, 0.55 + CUBE_OFFSET_Y, 0.08], [0.2 + CUBE_OFFSET_X, 0.95 + CUBE_OFFSET_Y, 0.05], [-0.7 + CUBE_OFFSET_X, 0.65 + CUBE_OFFSET_Y, -0.02],
-    [-1.4 + CUBE_OFFSET_X, 0.0 + CUBE_OFFSET_Y, 0.0], [-1.0 + CUBE_OFFSET_X, -0.65 + CUBE_OFFSET_Y, 0.05], [0.0 + CUBE_OFFSET_X, -1.05 + CUBE_OFFSET_Y, 0.0], [0.9 + CUBE_OFFSET_X, -0.85 + CUBE_OFFSET_Y, -0.05],
-    [1.4 + CUBE_OFFSET_X, 0.0 + CUBE_OFFSET_Y, 0.05]
+    [1.6 + CUBE_OFFSET_X, 0.8 + CUBE_OFFSET_Y, 0.03], [1.2 + CUBE_OFFSET_X, 0.4 + CUBE_OFFSET_Y, 0.0], [CUBE_OFFSET_X, CUBE_OFFSET_Y, 0.0], [-1.2 + CUBE_OFFSET_X, -0.4 + CUBE_OFFSET_Y, 0.0], [-1.6 + CUBE_OFFSET_X, -0.8 + CUBE_OFFSET_Y, 0.03]
   ],
-  coreRadius: [0.06, 0.07, 0.08, 0.07, 0.06, 0.07, 0.08, 0.07, 0.06],
-  mediumRadius: [0.15, 0.17, 0.18, 0.17, 0.15, 0.17, 0.18, 0.17, 0.15],
-  fragmentRadius: [0.28, 0.30, 0.32, 0.30, 0.28, 0.30, 0.32, 0.30, 0.28],
-  dustRadius: [0.42, 0.45, 0.48, 0.45, 0.42, 0.45, 0.48, 0.45, 0.42],
-  textureStreaks: [1.0, 0.9, 1.1, 1.0, 1.0, 0.9, 1.1, 1.0, 1.0],
+  coreRadius: [0.04, 0.05, 0.06, 0.05, 0.04],
+  mediumRadius: [0.10, 0.12, 0.14, 0.12, 0.10],
+  fragmentRadius: [0.18, 0.22, 0.26, 0.22, 0.18],
+  dustRadius: [0.28, 0.32, 0.36, 0.32, 0.28],
+  textureStreaks: [1.0, 0.9, 1.1, 0.9, 1.0],
   speedCoherence: 0.008,
-  weight: 0.25
+  weight: 0.12
 };
 
-  // Secondary stream B — splits below, curves behind cube (deeper z), merges
+  // Secondary stream B — faint inner trace, barely visible
   var RIBBON_STREAM_B = {
   centerline: [
-    [0.9 + CUBE_OFFSET_X, 0.0 + CUBE_OFFSET_Y, 0.02], [0.7 + CUBE_OFFSET_X, 0.35 + CUBE_OFFSET_Y, 0.05], [0.1 + CUBE_OFFSET_X, 0.65 + CUBE_OFFSET_Y, 0.02], [-0.5 + CUBE_OFFSET_X, 0.45 + CUBE_OFFSET_Y, -0.02],
-    [-1.0 + CUBE_OFFSET_X, 0.0 + CUBE_OFFSET_Y, 0.0], [-0.7 + CUBE_OFFSET_X, -0.45 + CUBE_OFFSET_Y, 0.03], [-0.1 + CUBE_OFFSET_X, -0.75 + CUBE_OFFSET_Y, 0.0], [0.5 + CUBE_OFFSET_X, -0.65 + CUBE_OFFSET_Y, -0.03],
-    [0.9 + CUBE_OFFSET_X, 0.0 + CUBE_OFFSET_Y, 0.02]
+    [1.0 + CUBE_OFFSET_X, 0.5 + CUBE_OFFSET_Y, 0.02], [0.6 + CUBE_OFFSET_X, 0.2 + CUBE_OFFSET_Y, 0.0], [CUBE_OFFSET_X, CUBE_OFFSET_Y, 0.0], [-0.6 + CUBE_OFFSET_X, -0.2 + CUBE_OFFSET_Y, 0.0], [-1.0 + CUBE_OFFSET_X, -0.5 + CUBE_OFFSET_Y, 0.02]
   ],
-  coreRadius: [0.04, 0.05, 0.06, 0.05, 0.04, 0.05, 0.06, 0.05, 0.04],
-  mediumRadius: [0.10, 0.12, 0.13, 0.12, 0.10, 0.12, 0.13, 0.12, 0.10],
-  fragmentRadius: [0.18, 0.20, 0.22, 0.20, 0.18, 0.20, 0.22, 0.20, 0.18],
-  dustRadius: [0.28, 0.30, 0.32, 0.30, 0.28, 0.30, 0.32, 0.30, 0.28],
-  textureStreaks: [0.9, 0.8, 1.0, 0.9, 0.9, 0.8, 1.0, 0.9, 0.9],
+  coreRadius: [0.03, 0.04, 0.05, 0.04, 0.03],
+  mediumRadius: [0.08, 0.10, 0.12, 0.10, 0.08],
+  fragmentRadius: [0.14, 0.18, 0.22, 0.18, 0.14],
+  dustRadius: [0.22, 0.26, 0.30, 0.26, 0.22],
+  textureStreaks: [0.9, 0.8, 1.0, 0.8, 0.9],
   speedCoherence: 0.010,
-  weight: 0.05
+  weight: 0.03
 };
 
   var RIBBON_STREAMS = [RIBBON, RIBBON_STREAM_A, RIBBON_STREAM_B];
@@ -589,17 +571,17 @@ var FLOW_C = {
     var texIdx0 = segIdx, texIdx1 = Math.min(segIdx + 1, stream.textureStreaks.length - 1);
     var texDensity = stream.textureStreaks[texIdx0] + (stream.textureStreaks[texIdx1] - stream.textureStreaks[texIdx0]) * st;
 
-    // Cross-section tier: 50% core, 35% medium, 12% fragment, 3% dust
-    // Concentrated core → coherent ring structure
+    // Cross-section tier: 60% core, 30% medium, 8% fragment, 2% dust
+    // Concentrated core → coherent band structure
     var tierRoll = Math.random();
     var crossDist, crossTier;
-    if (tierRoll < 0.50) {
-      crossDist = Math.pow(Math.random(), 0.85) * coreR;
+    if (tierRoll < 0.60) {
+      crossDist = Math.pow(Math.random(), 0.90) * coreR;
       crossTier = 0;
-    } else if (tierRoll < 0.85) {
+    } else if (tierRoll < 0.90) {
       crossDist = coreR + Math.random() * (medR - coreR);
       crossTier = 1;
-    } else if (tierRoll < 0.97) {
+    } else if (tierRoll < 0.98) {
       crossDist = medR + Math.random() * (fragR - medR);
       crossTier = 2;
     } else {
@@ -1418,14 +1400,9 @@ var FLOW_C = {
       }
 
       if (!accepted) {
-        // Rejected — sparse particle in negative space
-        theta = Math.random() * Math.PI * 2;
-        streamRadius = config.radiusMin + Math.random() * radiusRange;
-        widthOff = gaussian() * halfWidth * 0.45;
-        thickOff = layer.thickBase + gaussian() * layer.thickRange;
-        density = 0.05;
-        light = 0.05;
-        flowSpeed = config.baseSpeed * (0.96 + Math.random() * 0.08);
+        // Rejected — skip particle entirely, no island scatter
+        i--;
+        continue;
       }
 
       var c = colorPicker();
