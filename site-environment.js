@@ -199,23 +199,23 @@ import * as THREE from './vendor/three.module.min.js';
 
   // Shape A: Upper-right, large, powerful, continuous
   var SHAPE_A = {
-  centerline: [[2.2, 0.35, 0], [1.8, 1.2, 0.08], [0.5, 1.8, 0], [-0.8, 1.5, -0.08],
-               [-1.8, 0.35, 0], [-1.2, -0.6, 0.08], [0.2, -1.2, 0], [1.5, -0.8, -0.08],
-               [2.2, 0.35, 0]],
+  centerline: [[2.1, 0.0, 0], [1.7, 0.85, 0.08], [0.4, 1.45, 0], [-0.9, 1.15, -0.08],
+               [-1.9, 0.0, 0], [-1.3, -0.95, 0.08], [0.1, -1.55, 0], [1.4, -1.15, -0.08],
+               [2.1, 0.0, 0]],
   width: 0.5, density: 1.0, broken: false, breakPoints: []
 };
 
 var SHAPE_B = {
-  centerline: [[1.5, 0.35, 0.05], [1.2, 0.9, 0.08], [0.3, 1.3, 0.05], [-0.6, 1.0, -0.02],
-               [-1.3, 0.35, 0], [-0.9, -0.3, 0.05], [0.1, -0.7, 0], [1.0, -0.5, -0.05],
-               [1.5, 0.35, 0.05]],
+  centerline: [[1.4, 0.0, 0.05], [1.1, 0.55, 0.08], [0.2, 0.95, 0.05], [-0.7, 0.65, -0.02],
+               [-1.4, 0.0, 0], [-1.0, -0.65, 0.05], [0.0, -1.05, 0], [0.9, -0.85, -0.05],
+               [1.4, 0.0, 0.05]],
   width: 0.35, density: 0.7, broken: false, breakPoints: []
 };
 
 var SHAPE_C = {
-  centerline: [[1.0, 0.35, 0.02], [0.8, 0.7, 0.05], [0.2, 1.0, 0.02], [-0.4, 0.8, -0.02],
-               [-0.9, 0.35, 0], [-0.6, -0.1, 0.03], [0.0, -0.4, 0], [0.6, -0.3, -0.03],
-               [1.0, 0.35, 0.02]],
+  centerline: [[0.9, 0.0, 0.02], [0.7, 0.35, 0.05], [0.1, 0.65, 0.02], [-0.5, 0.45, -0.02],
+               [-1.0, 0.0, 0], [-0.7, -0.45, 0.03], [-0.1, -0.75, 0], [0.5, -0.65, -0.03],
+               [0.9, 0.0, 0.02]],
   width: 0.25, density: 0.5, broken: false, breakPoints: []
 };
 
@@ -340,7 +340,7 @@ var SHAPE_C = {
 
   var LIGHT_ZONES = [
     { // Key Light — upper-right, strongest contribution
-      cx: 2.3, cy: 1.55, cz: 0.3,
+      cx: 2.2, cy: 1.2, cz: 0.3,
       radius: 2.5,
       intensity: 1.0,
       falloff: 1.5,
@@ -354,7 +354,7 @@ var SHAPE_C = {
       type: "fill"
     },
     { // Rim Light — from left/behind, separates cube from field
-      cx: -1.4, cy: 0.85, cz: -0.5,
+      cx: -1.5, cy: 0.5, cz: -0.5,
       radius: 1.5,
       intensity: 0.25,
       falloff: 1.2,
@@ -424,21 +424,21 @@ var SHAPE_C = {
 
   // Flow A: Primary energy river — large, continuous, dominant
   var FLOW_A = {
-  centerline: [[2.2, 0.35, 0], [1.8, 1.2, 0.08], [0.5, 1.8, 0], [-0.8, 1.5, -0.08],
-               [-1.8, 0.35, 0], [-1.2, -0.6, 0.08], [0.2, -1.2, 0], [1.5, -0.8, -0.08],
-               [2.2, 0.35, 0]],
+  centerline: [[2.1, 0.0, 0], [1.7, 0.85, 0.08], [0.4, 1.45, 0], [-0.9, 1.15, -0.08],
+               [-1.9, 0.0, 0], [-1.3, -0.95, 0.08], [0.1, -1.55, 0], [1.4, -1.15, -0.08],
+               [2.1, 0.0, 0]],
   flowWidth: 0.08, speedCoherence: 0.015, weight: 0.50
 };
 var FLOW_B = {
-  centerline: [[1.5, 0.35, 0.05], [1.2, 0.9, 0.08], [0.3, 1.3, 0.05], [-0.6, 1.0, -0.02],
-               [-1.3, 0.35, 0], [-0.9, -0.3, 0.05], [0.1, -0.7, 0], [1.0, -0.5, -0.05],
-               [1.5, 0.35, 0.05]],
+  centerline: [[1.4, 0.0, 0.05], [1.1, 0.55, 0.08], [0.2, 0.95, 0.05], [-0.7, 0.65, -0.02],
+               [-1.4, 0.0, 0], [-1.0, -0.65, 0.05], [0.0, -1.05, 0], [0.9, -0.85, -0.05],
+               [1.4, 0.0, 0.05]],
   flowWidth: 0.06, speedCoherence: 0.018, weight: 0.35
 };
 var FLOW_C = {
-  centerline: [[1.0, 0.35, 0.02], [0.8, 0.7, 0.05], [0.2, 1.0, 0.02], [-0.4, 0.8, -0.02],
-               [-0.9, 0.35, 0], [-0.6, -0.1, 0.03], [0.0, -0.4, 0], [0.6, -0.3, -0.03],
-               [1.0, 0.35, 0.02]],
+  centerline: [[0.9, 0.0, 0.02], [0.7, 0.35, 0.05], [0.1, 0.65, 0.02], [-0.5, 0.45, -0.02],
+               [-1.0, 0.0, 0], [-0.7, -0.45, 0.03], [-0.1, -0.75, 0], [0.5, -0.65, -0.03],
+               [0.9, 0.0, 0.02]],
   flowWidth: 0.05, speedCoherence: 0.020, weight: 0.15
 };
 
@@ -503,9 +503,9 @@ var FLOW_C = {
 
   var RIBBON = {
   centerline: [
-    [2.2, 0.35, 0.0], [1.8, 1.2, 0.08], [0.5, 1.8, 0.0], [-0.8, 1.5, -0.08],
-    [-1.8, 0.35, 0.0], [-1.2, -0.6, 0.08], [0.2, -1.2, 0.0], [1.5, -0.8, -0.08],
-    [2.2, 0.35, 0.0]
+    [2.1, 0.0, 0.0], [1.7, 0.85, 0.08], [0.4, 1.45, 0.0], [-0.9, 1.15, -0.08],
+    [-1.9, 0.0, 0.0], [-1.3, -0.95, 0.08], [0.1, -1.55, 0.0], [1.4, -1.15, -0.08],
+    [2.1, 0.0, 0.0]
   ],
   coreRadius: [0.08, 0.09, 0.10, 0.09, 0.08, 0.09, 0.10, 0.09, 0.08],
   mediumRadius: [0.20, 0.22, 0.24, 0.22, 0.20, 0.22, 0.24, 0.22, 0.20],
@@ -519,9 +519,9 @@ var FLOW_C = {
   // Secondary stream A — splits above cube, arcs over top, merges left
   var RIBBON_STREAM_A = {
   centerline: [
-    [1.5, 0.35, 0.05], [1.2, 0.9, 0.08], [0.3, 1.3, 0.05], [-0.6, 1.0, -0.02],
-    [-1.3, 0.35, 0.0], [-0.9, -0.3, 0.05], [0.1, -0.7, 0.0], [1.0, -0.5, -0.05],
-    [1.5, 0.35, 0.05]
+    [1.4, 0.0, 0.05], [1.1, 0.55, 0.08], [0.2, 0.95, 0.05], [-0.7, 0.65, -0.02],
+    [-1.4, 0.0, 0.0], [-1.0, -0.65, 0.05], [0.0, -1.05, 0.0], [0.9, -0.85, -0.05],
+    [1.4, 0.0, 0.05]
   ],
   coreRadius: [0.06, 0.07, 0.08, 0.07, 0.06, 0.07, 0.08, 0.07, 0.06],
   mediumRadius: [0.15, 0.17, 0.18, 0.17, 0.15, 0.17, 0.18, 0.17, 0.15],
@@ -535,9 +535,9 @@ var FLOW_C = {
   // Secondary stream B — splits below, curves behind cube (deeper z), merges
   var RIBBON_STREAM_B = {
   centerline: [
-    [1.0, 0.35, 0.02], [0.8, 0.7, 0.05], [0.2, 1.0, 0.02], [-0.4, 0.8, -0.02],
-    [-0.9, 0.35, 0.0], [-0.6, -0.1, 0.03], [0.0, -0.4, 0.0], [0.6, -0.3, -0.03],
-    [1.0, 0.35, 0.02]
+    [0.9, 0.0, 0.02], [0.7, 0.35, 0.05], [0.1, 0.65, 0.02], [-0.5, 0.45, -0.02],
+    [-1.0, 0.0, 0.0], [-0.7, -0.45, 0.03], [-0.1, -0.75, 0.0], [0.5, -0.65, -0.03],
+    [0.9, 0.0, 0.02]
   ],
   coreRadius: [0.04, 0.05, 0.06, 0.05, 0.04, 0.05, 0.06, 0.05, 0.04],
   mediumRadius: [0.10, 0.12, 0.13, 0.12, 0.10, 0.12, 0.13, 0.12, 0.10],
@@ -1104,6 +1104,7 @@ var FLOW_C = {
     "uniform float uRadiusBRatio;",
     "uniform float uHalfWidth;",
     "uniform mat3 uRotation;",
+    "uniform vec3 uCubeOffset;",
     "varying vec3 vColor;",
     "varying float vDiffuse;",
     "varying float vEmission;",
@@ -1120,16 +1121,16 @@ var FLOW_C = {
     "  float n4 = sin(theta * 5.5 + aSeed * 8.1);",
     "  float n5 = cos(theta * 7.3 + aSeed * 3.7);",
     "  vec3 centerLocal = vec3(",
-    "    aStreamRadius * cos(theta) + n1 * aStreamRadius * 0.22 + n4 * aStreamRadius * 0.08,",
-    "    aStreamRadius * uRadiusBRatio * sin(theta) + n2 * aStreamRadius * 0.18 + n5 * aStreamRadius * 0.07,",
-    "    n3 * aStreamRadius * 0.14 + n4 * aStreamRadius * 0.05",
+    "    aStreamRadius * cos(theta) + n1 * aStreamRadius * 0.08 + n4 * aStreamRadius * 0.03,",
+    "    aStreamRadius * uRadiusBRatio * sin(theta) + n2 * aStreamRadius * 0.06 + n5 * aStreamRadius * 0.02,",
+    "    n3 * aStreamRadius * 0.05 + n4 * aStreamRadius * 0.02",
     "  );",
     "  vec3 center = uRotation * centerLocal;",
     // Normal and binormal for width/thickness offsets
     "  vec3 normalLocal = normalize(vec3(uRadiusBRatio * cos(theta), sin(theta), 0.0));",
     "  vec3 normal = uRotation * normalLocal;",
     "  vec3 binormal = normalize(cross(normalize(center + vec3(0.001)), normal));",
-    "  vec3 worldPos = center + normal * aWidthOffset + binormal * aThicknessOffset;",
+    "  vec3 worldPos = center + normal * aWidthOffset + binormal * aThicknessOffset + uCubeOffset;",
     // Entrance scale
     "  worldPos *= mix(0.75, 1.0, uEntrance);",
     // Scroll dispersion
@@ -1574,7 +1575,8 @@ var FLOW_C = {
       uCubeZ: { value: cubeViewZ },
       uRadiusBRatio: { value: config.radiusBRatio },
       uHalfWidth: { value: config.width * 0.5 },
-      uRotation: { value: rotationMat3 }
+      uRotation: { value: rotationMat3 },
+      uCubeOffset: { value: new THREE.Vector3(CUBE_OFFSET_X, CUBE_OFFSET_Y, 0) }
     };
 
     function makeMaterial(cullMode, opacity, isHighlight) {
