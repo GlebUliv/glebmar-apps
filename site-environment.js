@@ -989,6 +989,32 @@ import * as THREE from './vendor/three.module.min.js';
       pointerSmoothY += (pointerTargetY - pointerSmoothY) * 0.06;
     }
 
+    // ── Static composition override (Hero Master capture) ──
+    if (window.__comp) {
+      var c = window.__comp;
+      camera.position.set(c.camX, c.camY, c.camZ);
+      camera.lookAt(c.lookX, c.lookY, c.lookZ);
+      uTime.value = c.freezeTime || 0;
+      if (cubeGroup) {
+        cubeGroup.rotation.y = CUBE_INIT_ROT_Y;
+        cubeGroup.rotation.x = CUBE_INIT_ROT_X;
+        cubeGroup.scale.setScalar(c.cubeScale);
+        cubeGroup.position.set(0, 0, 0);
+      }
+      for (var ci = 0; ci < cubeOpacityRefs.length; ci++) {
+        cubeOpacityRefs[ci].uniform.value = cubeOpacityRefs[ci].base * c.cubeVisibility;
+      }
+      for (var ri = 0; ri < materialOpacityRefs.length; ri++) {
+        var cref = materialOpacityRefs[ri];
+        var cmult = cref.isDust ? c.dustOpacity : c.fieldOpacity;
+        cref.uniform.value = cref.base * cmult;
+      }
+      uScrollProgress.value = 0;
+      uEntranceProgress.value = 1;
+      renderer.render(scene, camera);
+      return;
+    }
+
     // ── Composition Director: interpolate between shots ──
     var idx = Math.floor(shotProgress);
     var frac = smoothstep(shotProgress - idx); // eased transition
