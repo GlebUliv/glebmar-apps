@@ -52,7 +52,7 @@ import * as THREE from './vendor/three.module.min.js';
   baseSpeed: 2 * Math.PI / 90,
   opacity: 1,                     // БЫЛО 0.92 → ПЛОТНЕЕ
   highlightOpacity: 0.65,
-  highlightFraction: 0.04
+  highlightFraction: 0.06
 };
 
   // Secondary field: different inclination, thinner, adds complexity
@@ -68,7 +68,7 @@ import * as THREE from './vendor/three.module.min.js';
   baseSpeed: 2 * Math.PI / 115,
   opacity: 0.9,
   highlightOpacity: 0.55,
-  highlightFraction: 0.05
+  highlightFraction: 0.07
 };
 
   var FIELD_COUNTS = {
@@ -589,17 +589,17 @@ var FLOW_C = {
     var texIdx0 = segIdx, texIdx1 = Math.min(segIdx + 1, stream.textureStreaks.length - 1);
     var texDensity = stream.textureStreaks[texIdx0] + (stream.textureStreaks[texIdx1] - stream.textureStreaks[texIdx0]) * st;
 
-    // Cross-section tier: 25% core, 35% medium, 25% fragment, 15% dust
-    // Denser center than before, less dust → more negative space
+    // Cross-section tier: 35% core, 35% medium, 20% fragment, 10% dust
+    // Denser core, less dust → coherent ribbon feel
     var tierRoll = Math.random();
     var crossDist, crossTier;
-    if (tierRoll < 0.25) {
-      crossDist = Math.pow(Math.random(), 0.7) * coreR;
+    if (tierRoll < 0.35) {
+      crossDist = Math.pow(Math.random(), 0.8) * coreR;
       crossTier = 0;
-    } else if (tierRoll < 0.60) {
+    } else if (tierRoll < 0.70) {
       crossDist = coreR + Math.random() * (medR - coreR);
       crossTier = 1;
-    } else if (tierRoll < 0.85) {
+    } else if (tierRoll < 0.90) {
       crossDist = medR + Math.random() * (fragR - medR);
       crossTier = 2;
     } else {
@@ -609,14 +609,14 @@ var FLOW_C = {
 
     // Texture modulation — calm regions push particles outward
     if (Math.random() > texDensity * 0.85 && crossTier < 2) {
-      crossDist *= 1.35;
+      crossDist *= 1.20;
     }
 
     // Cross-section offset — flattened in y, thin in z
     var angle = Math.random() * Math.PI * 2;
     var dx = Math.cos(angle) * crossDist;
-    var dy = Math.sin(angle) * crossDist * 0.65;
-    var dz = Math.sin(angle) * crossDist * 0.25;
+    var dy = Math.sin(angle) * crossDist * 0.55;
+    var dz = Math.sin(angle) * crossDist * 0.18;
 
     return {
       x: cx + dx + CUBE_OFFSET_X,
@@ -1354,10 +1354,10 @@ var FLOW_C = {
 
     // Depth layer assignment (unchanged from Layered Depth V1)
     var DEPTH_LAYERS = [
-      { id: 1, fraction: 0.03, thickBase: -2.0, thickRange: 0.8, sizeMul: 1.8, brightMul: 1.15, opacityMul: 0.70 },
-      { id: 2, fraction: 0.60, thickBase: 0.0,  thickRange: 0.3, sizeMul: 1.0, brightMul: 1.0,  opacityMul: 1.0 },
-      { id: 3, fraction: 0.30, thickBase: 2.0,  thickRange: 0.8, sizeMul: 0.55, brightMul: 0.65, opacityMul: 0.80 },
-      { id: 4, fraction: 0.07, thickBase: 4.0,  thickRange: 0.8, sizeMul: 0.25, brightMul: 0.35, opacityMul: 0.50 }
+      { id: 1, fraction: 0.05, thickBase: -2.0, thickRange: 0.5, sizeMul: 2.0, brightMul: 1.25, opacityMul: 0.85 },
+      { id: 2, fraction: 0.58, thickBase: 0.0,  thickRange: 0.2, sizeMul: 1.0, brightMul: 1.0,  opacityMul: 1.0 },
+      { id: 3, fraction: 0.30, thickBase: 2.0,  thickRange: 0.6, sizeMul: 0.45, brightMul: 0.55, opacityMul: 0.70 },
+      { id: 4, fraction: 0.07, thickBase: 4.0,  thickRange: 0.6, sizeMul: 0.18, brightMul: 0.25, opacityMul: 0.40 }
     ];
 
     function pickDepthLayer() {
@@ -1373,10 +1373,10 @@ var FLOW_C = {
     // Cross-section tier → size/brightness multipliers
     // Core: largest, brightest. Dust: smallest, dimmest.
     var TIER_MUL = [
-      { sizeMul: 1.3, brightMul: 1.2 },   // core
+      { sizeMul: 1.6, brightMul: 1.4 },   // core — larger, brighter
       { sizeMul: 1.0, brightMul: 1.0 },   // medium
-      { sizeMul: 0.6, brightMul: 0.6 },   // fragment
-      { sizeMul: 0.3, brightMul: 0.3 }    // dust
+      { sizeMul: 0.5, brightMul: 0.5 },   // fragment
+      { sizeMul: 0.2, brightMul: 0.2 }    // dust — smallest, dimmest
     ];
 
     // Ribbon-based particle generation:
@@ -1396,14 +1396,14 @@ var FLOW_C = {
 
         density = totalDensityAt(rpos.x, rpos.y, rpos.z);
         // Cross-section tier affects acceptance — core always accepted, dust rarely
-        var tierAccept = [0.95, 0.80, 0.50, 0.20][rpos.crossTier];
+        var tierAccept = [0.98, 0.85, 0.40, 0.12][rpos.crossTier];
         if (Math.random() < density * tierAccept) {
           var stream = worldToStream(rpos.x, rpos.y, rpos.z, rotMat, bRatio);
           theta = stream.theta;
           streamRadius = Math.max(config.radiusMin, Math.min(config.radiusMax, stream.radius));
 
           // Width offset from cross-section distance
-          widthOff = gaussian() * 0.06 + (rpos.crossDist - 0.3) * 0.15;
+          widthOff = gaussian() * 0.04 + (rpos.crossDist - 0.3) * 0.10;
 
           // Depth layer controls thickness
           thickOff = layer.thickBase + gaussian() * layer.thickRange;
@@ -1422,7 +1422,7 @@ var FLOW_C = {
         // Rejected — sparse particle in negative space
         theta = Math.random() * Math.PI * 2;
         streamRadius = config.radiusMin + Math.random() * radiusRange;
-        widthOff = gaussian() * halfWidth * 0.65;
+        widthOff = gaussian() * halfWidth * 0.45;
         thickOff = layer.thickBase + gaussian() * layer.thickRange;
         density = 0.05;
         light = 0.05;
@@ -1462,7 +1462,7 @@ var FLOW_C = {
       var hTheta = 0, hRadius = 0, hDensity = 0, hLight = 0;
       var hWidth = 0, hThick = 0, hSpeed = 0;
       var hAccepted = false;
-      var hLayer = Math.random() < 0.15 ? DEPTH_LAYERS[0] : DEPTH_LAYERS[1];
+      var hLayer = Math.random() < 0.25 ? DEPTH_LAYERS[0] : DEPTH_LAYERS[1];
 
       for (var attempt = 0; attempt < 50; attempt++) {
         var hRpos = sampleRibbonPosition();
@@ -1473,7 +1473,7 @@ var FLOW_C = {
         hDensity = totalDensityAt(hRpos.x, hRpos.y, hRpos.z);
         hLight = lightFieldAt(hRpos.x, hRpos.y, hRpos.z);
 
-        if (hLight > 0.5 && hDensity > 0.3 && Math.random() < hLight * hDensity) {
+        if (hLight > 0.6 && hDensity > 0.4 && Math.random() < hLight * hDensity * 1.2) {
           var hStream = worldToStream(hRpos.x, hRpos.y, hRpos.z, rotMat, bRatio);
           hTheta = hStream.theta;
           hRadius = Math.max(config.radiusMin, Math.min(config.radiusMax, hStream.radius));
