@@ -39,29 +39,53 @@ import * as THREE from './vendor/three.module.min.js';
   // Cube width = 2 * CUBE_HALF = 1.1
   var CUBE_WIDTH = 2 * CUBE_HALF;
 
-  // Art-directed centerline control points (10 points)
-  // Route: upper-right entry → curve toward cube → pass through cube depth
-  //        → continue below cube → dissolve toward lower-left
-  // Open ends — NOT a closed ring
+  // Local circulation motion parameters
+  var CIRCULATION_CONFIG = {
+    driftAmpMin: 0.015,       // min tangential drift amplitude (normalized spline units)
+    driftAmpMax: 0.035,       // max tangential drift amplitude
+    driftFreqBase: 0.08,      // base drift frequency (Hz)
+    driftFreqVar: 0.04,       // ± frequency variation
+    circAmpMax: 0.15,         // max cross-section circulation angular amplitude (radians)
+    circFreqBase: 0.05,       // base circulation frequency
+    circFreqVar: 0.03,        // ± frequency variation
+    microTurbAmp: 0.004,      // micro turbulence displacement
+    speedVar: 0.08            // ±8% per-particle speed variation
+  };
+
+  // Art-directed centerline control points (12 points)
+  // Open C-shape: upper-right entry → upper arc behind cube → left transition
+  // → lower arc in front of cube → lower-right exit. Both ends on right side.
+  // Z: negative = behind cube (farther from camera), positive = in front (closer)
   var ENERGY_STRUCTURE_CONTROL_POINTS = [
-    new THREE.Vector3( 2.80,  1.50,  0.30),   // 0: upper-right entry — broad
-    new THREE.Vector3( 2.00,  1.00, -0.10),   // 1: curving inward
-    new THREE.Vector3( 1.20,  0.50, -0.40),   // 2: approaching cube, going behind
-    new THREE.Vector3( 0.40,  0.10, -0.50),   // 3: behind cube
-    new THREE.Vector3(-0.20, -0.20, -0.30),   // 4: at cube center, slightly below
-    new THREE.Vector3(-0.80, -0.50,  0.00),   // 5: below cube
-    new THREE.Vector3(-1.40, -0.80,  0.30),   // 6: expanding
-    new THREE.Vector3(-1.90, -1.00,  0.20),   // 7: tapering
-    new THREE.Vector3(-2.30, -1.20,  0.10),   // 8: dissolving
-    new THREE.Vector3(-2.70, -1.40,  0.05)    // 9: exit — sparse
+    // Open upper-right entrance
+    new THREE.Vector3( 2.05,  0.92, -0.18),
+    new THREE.Vector3( 1.55,  0.72, -0.24),
+
+    // Upper arc behind the cube
+    new THREE.Vector3( 1.00,  0.58, -0.30),
+    new THREE.Vector3( 0.45,  0.54, -0.32),
+    new THREE.Vector3(-0.08,  0.38, -0.22),
+
+    // Left transition, close to cube depth
+    new THREE.Vector3(-0.30,  0.02, -0.04),
+
+    // Lower arc in front of the cube
+    new THREE.Vector3(-0.16, -0.38,  0.16),
+    new THREE.Vector3( 0.32, -0.56,  0.25),
+    new THREE.Vector3( 0.88, -0.54,  0.22),
+    new THREE.Vector3( 1.38, -0.32,  0.12),
+
+    // Open lower-right exit
+    new THREE.Vector3( 1.78, -0.04,  0.02),
+    new THREE.Vector3( 2.16,  0.22, -0.06)
   ];
 
   var ENERGY_STRUCTURE_CONFIG = {
-    baseWidth: 0.15,
-    baseThickness: 0.28,
+    baseWidth: 0.115,
+    baseThickness: 0.18,
     opacity: 1.0,
     highlightOpacity: 0.65,
-    highlightFraction: 0.06,
+    highlightFraction: 0.035,
     flowSpeed: 0.015,         // base particle flow speed along centerline
     speedVariation: 0.03,     // ±3% speed variation
     lutSize: 256              // centerline lookup table resolution
@@ -523,25 +547,75 @@ var SHAPE_C = {
   }
 
   // ─── Profile Functions ────────────────────────────────────
-  // Smooth width/thickness/density along centerline length.
-  // Broad at entry, narrow through cube, expand below, taper at exit.
+  // Open C-shape: upper-right entry → upper arc → left transition → lower arc → lower-right exit
+  // Both open ends taper smoothly. Main visual mass in lower arc (front of cube).
+
+  var BASE_W = ENERGY_STRUCTURE_CONFIG.baseWidth;
+  var BASE_T = ENERGY_STRUCTURE_CONFIG.baseThickness;
 
   function widthAt(t) {
-    // Base width + sine bulge - gaussian pinch at cube crossing (t≈0.45)
-    return 0.15
-      + 0.10 * Math.sin(t * Math.PI)
-      - 0.05 * Math.exp(-Math.pow((t - 0.45) / 0.15, 2));
+    var w = BASE_W;
+
+    // Upper-right entrance: moderately broad
+    w *= 1.0 + 0.18 * Math.exp(-Math.pow((t - 0.08) / 0.13, 2));
+
+    // Upper arc: stable main body
+    w *= 1.0 + 0.08 * Math.exp(-Math.pow((t - 0.32) / 0.20, 2));
+
+    // Left transition: slightly narrower
+    w *= 1.0 - 0.16 * Math.exp(-Math.pow((t - 0.50) / 0.10, 2));
+
+    // Lower arc: strongest visual body
+    w *= 1.0 + 0.20 * Math.exp(-Math.pow((t - 0.70) / 0.17, 2));
+
+    // Both open ends taper smoothly
+    var startFade = Math.min(1.0, Math.max(0.0, t / 0.10));
+    var endFade = Math.min(1.0, Math.max(0.0, (1.0 - t) / 0.10));
+
+    startFade = smoothstep(startFade);
+    endFade = smoothstep(endFade);
+
+    w *= 0.62 + 0.38 * startFade;
+    w *= 0.62 + 0.38 * endFade;
+
+    return w;
   }
 
   function thicknessAt(t) {
-    return 0.28
-      + 0.12 * Math.sin(t * Math.PI)
-      - 0.08 * Math.exp(-Math.pow((t - 0.45) / 0.12, 2));
+    var th = BASE_T;
+
+    // Upper arc behind cube: slightly thinner
+    th *= 1.0 - 0.12 * Math.exp(-Math.pow((t - 0.32) / 0.20, 2));
+
+    // Left transition: controlled minimum
+    th *= 1.0 - 0.18 * Math.exp(-Math.pow((t - 0.50) / 0.10, 2));
+
+    // Lower arc in front: slightly more volume
+    th *= 1.0 + 0.14 * Math.exp(-Math.pow((t - 0.70) / 0.17, 2));
+
+    // Taper both open ends
+    var startFade = Math.min(1.0, Math.max(0.0, t / 0.12));
+    var endFade = Math.min(1.0, Math.max(0.0, (1.0 - t) / 0.12));
+
+    startFade = smoothstep(startFade);
+    endFade = smoothstep(endFade);
+
+    th *= 0.70 + 0.30 * startFade;
+    th *= 0.70 + 0.30 * endFade;
+
+    return th;
   }
 
   function densityAt(t) {
-    // High in middle (near cube), lower at open ends
-    return Math.sin(t * Math.PI) * 0.8 + 0.2;
+    var centerMass = 0.72 + 0.28 * Math.sin(t * Math.PI);
+
+    var startFade = Math.min(1.0, Math.max(0.0, t / 0.10));
+    var endFade = Math.min(1.0, Math.max(0.0, (1.0 - t) / 0.10));
+
+    startFade = smoothstep(startFade);
+    endFade = smoothstep(endFade);
+
+    return centerMass * (0.45 + 0.55 * startFade) * (0.45 + 0.55 * endFade);
   }
 
   // ─── Cross-Section Zone Sampling ───────────────────────────
@@ -1038,18 +1112,18 @@ var SHAPE_C = {
   }
 
   // ─── Energy Structure V2 Shaders ───────────────────────────
-  // Particles flow along a 3D centerline spline sampled via LUT textures.
-  // The vertex shader wraps t=1→t=0 for continuous flow.
+  // Particles oscillate locally around their baseT position on a 3D centerline.
+  // No global travel — bounded tangential drift + cross-section circulation.
   // Cross-section offset uses a stable moving frame (normal/binormal).
   var fieldVertexShader = [
     glslMaterialResponse,
     "attribute float aT;",
     "attribute float aCrossR;",
     "attribute float aCrossAngle;",
-    "attribute float aZone;",
     "attribute float aSeed;",
     "attribute float aPhase;",
-    "attribute float aSpeed;",
+    "attribute vec3 aDrift;",   // dir, amp, freq
+    "attribute vec2 aCirc;",     // freq, amp
     "attribute float aSize;",
     "attribute float aBrightness;",
     "attribute vec3 aColorMix;",
@@ -1072,15 +1146,40 @@ var SHAPE_C = {
     "varying float vMaterialId;",
     // Profile functions — must match JS widthAt/thicknessAt
     "float widthAt(float t) {",
-    "  return 0.15 + 0.10 * sin(t * 3.14159265) - 0.05 * exp(-pow((t - 0.45) / 0.15, 2.0));",
+    "  float w = 0.115;",
+    "  w *= 1.0 + 0.18 * exp(-pow((t - 0.08) / 0.13, 2.0));",
+    "  w *= 1.0 + 0.08 * exp(-pow((t - 0.32) / 0.20, 2.0));",
+    "  w *= 1.0 - 0.16 * exp(-pow((t - 0.50) / 0.10, 2.0));",
+    "  w *= 1.0 + 0.20 * exp(-pow((t - 0.70) / 0.17, 2.0));",
+    "  float startFade = clamp(t / 0.10, 0.0, 1.0);",
+    "  float endFade = clamp((1.0 - t) / 0.10, 0.0, 1.0);",
+    "  startFade = startFade * startFade * (3.0 - 2.0 * startFade);",
+    "  endFade = endFade * endFade * (3.0 - 2.0 * endFade);",
+    "  w *= 0.62 + 0.38 * startFade;",
+    "  w *= 0.62 + 0.38 * endFade;",
+    "  return w;",
     "}",
     "float thicknessAt(float t) {",
-    "  return 0.28 + 0.12 * sin(t * 3.14159265) - 0.08 * exp(-pow((t - 0.45) / 0.12, 2.0));",
+    "  float th = 0.18;",
+    "  th *= 1.0 - 0.12 * exp(-pow((t - 0.32) / 0.20, 2.0));",
+    "  th *= 1.0 - 0.18 * exp(-pow((t - 0.50) / 0.10, 2.0));",
+    "  th *= 1.0 + 0.14 * exp(-pow((t - 0.70) / 0.17, 2.0));",
+    "  float startFade = clamp(t / 0.12, 0.0, 1.0);",
+    "  float endFade = clamp((1.0 - t) / 0.12, 0.0, 1.0);",
+    "  startFade = startFade * startFade * (3.0 - 2.0 * startFade);",
+    "  endFade = endFade * endFade * (3.0 - 2.0 * endFade);",
+    "  th *= 0.70 + 0.30 * startFade;",
+    "  th *= 0.70 + 0.30 * endFade;",
+    "  return th;",
     "}",
     "void main() {",
     "  float flowTime = uReduceMotion > 0.5 ? 0.0 : uTime;",
-    // Flow along centerline with wrap-around (t=1 → t=0)
-    "  float t = fract(aT + flowTime * aSpeed);",
+    // Bounded local circulation — no global travel, no wrapping
+    // 1. Tangential drift: bounded sinusoidal around baseT
+    "  float drift = aDrift.x * aDrift.y * sin(flowTime * aDrift.z + aPhase);",
+    "  float t = aT + drift;",
+    // Clamp near open endpoints — no wrapping
+    "  t = clamp(t, 0.001, 0.999);",
     // Sample centerline LUT textures
     "  vec2 lutCoord = vec2(t, 0.5);",
     "  vec3 centerlinePos = texture2D(uCenterlinePos, lutCoord).rgb;",
@@ -1089,13 +1188,14 @@ var SHAPE_C = {
     // Width/thickness at this point along centerline
     "  float w = widthAt(t);",
     "  float th = thicknessAt(t);",
-    // Cross-section offset in the moving frame
-    "  float cosA = cos(aCrossAngle);",
-    "  float sinA = sin(aCrossAngle);",
+    // 2. Cross-section circulation: slow angular oscillation around tangent
+    "  float circAngle = aCrossAngle + aCirc.y * sin(flowTime * aCirc.x + aPhase * 1.7);",
+    "  float cosA = cos(circAngle);",
+    "  float sinA = sin(circAngle);",
     "  vec3 worldPos = centerlinePos + normal * (cosA * aCrossR * w) + binormal * (sinA * aCrossR * th);",
-    // Subtle noise perturbation for organic feel
-    "  float n1 = sin(t * 20.0 + aSeed * 6.283) * 0.005;",
-    "  float n2 = cos(t * 15.0 + aSeed * 4.56) * 0.005;",
+    // 3. Micro turbulence: deterministic from seed + phase, no per-frame random
+    "  float n1 = sin(flowTime * 0.7 + aSeed * 6.283 + aPhase) * 0.004;",
+    "  float n2 = cos(flowTime * 0.5 + aSeed * 4.56 + aPhase * 1.3) * 0.004;",
     "  worldPos += normal * n1 + binormal * n2;",
     // Entrance scale
     "  worldPos *= mix(0.75, 1.0, uEntrance);",
@@ -1302,10 +1402,10 @@ var SHAPE_C = {
 
   // Depth layers — preserved from V1 for visual continuity
   var DEPTH_LAYERS = [
-    { id: 1, fraction: 0.05, sizeMul: 2.0,  brightMul: 1.25 },
-    { id: 2, fraction: 0.58, sizeMul: 1.0,  brightMul: 1.0  },
-    { id: 3, fraction: 0.30, sizeMul: 0.45, brightMul: 0.55 },
-    { id: 4, fraction: 0.07, sizeMul: 0.18, brightMul: 0.25 }
+    { id: 1, fraction: 0.035, sizeMul: 1.45, brightMul: 1.15 },
+    { id: 2, fraction: 0.625, sizeMul: 1.00, brightMul: 1.00 },
+    { id: 3, fraction: 0.280, sizeMul: 0.50, brightMul: 0.58 },
+    { id: 4, fraction: 0.060, sizeMul: 0.20, brightMul: 0.27 }
   ];
 
   function pickDepthLayer() {
@@ -1344,8 +1444,12 @@ var SHAPE_C = {
           var wPos = sampleCenterline(u);
           var light = lightFieldAt(wPos.x, wPos.y, wPos.z);
 
-          // Flow speed with variation
-          var speed = cfg.flowSpeed * (1.0 - cfg.speedVariation * 0.5 + Math.random() * cfg.speedVariation);
+          // Local circulation: bounded drift + cross-section rotation
+          var driftDir = Math.random() < 0.5 ? 1.0 : -1.0;
+          var driftAmp = CIRCULATION_CONFIG.driftAmpMin + Math.random() * (CIRCULATION_CONFIG.driftAmpMax - CIRCULATION_CONFIG.driftAmpMin);
+          var driftFreq = CIRCULATION_CONFIG.driftFreqBase + (Math.random() * 2 - 1) * CIRCULATION_CONFIG.driftFreqVar;
+          var circFreq = CIRCULATION_CONFIG.circFreqBase + (Math.random() * 2 - 1) * CIRCULATION_CONFIG.circFreqVar;
+          var circAmp = Math.random() * CIRCULATION_CONFIG.circAmpMax;
 
           // Color
           var c = pickEnergyColor();
@@ -1367,7 +1471,11 @@ var SHAPE_C = {
             zone: zone,
             seed: Math.random(),
             phase: Math.random() * Math.PI * 2,
-            speed: speed,
+            driftDir: driftDir,
+            driftAmp: driftAmp,
+            driftFreq: driftFreq,
+            circFreq: circFreq,
+            circAmp: circAmp,
             size: finalSize,
             light: Math.min(1.0, light * brightMul * layer.brightMul),
             materialId: materialId,
@@ -1398,7 +1506,11 @@ var SHAPE_C = {
         var hDens = densityAt(hU);
 
         if (hLight > 0.65 && hDens > 0.5 && Math.random() < hLight * hDens * 1.4) {
-          var hSpeed = cfg.flowSpeed * (1.0 - cfg.speedVariation * 0.5 + Math.random() * cfg.speedVariation);
+          var hDriftDir = Math.random() < 0.5 ? 1.0 : -1.0;
+          var hDriftAmp = CIRCULATION_CONFIG.driftAmpMin + Math.random() * (CIRCULATION_CONFIG.driftAmpMax - CIRCULATION_CONFIG.driftAmpMin);
+          var hDriftFreq = CIRCULATION_CONFIG.driftFreqBase + (Math.random() * 2 - 1) * CIRCULATION_CONFIG.driftFreqVar;
+          var hCircFreq = CIRCULATION_CONFIG.circFreqBase + (Math.random() * 2 - 1) * CIRCULATION_CONFIG.circFreqVar;
+          var hCircAmp = Math.random() * CIRCULATION_CONFIG.circAmpMax;
           var cH = pickHighlightColor();
 
           particles.push({
@@ -1408,7 +1520,11 @@ var SHAPE_C = {
             zone: hZone,
             seed: Math.random(),
             phase: Math.random() * Math.PI * 2,
-            speed: hSpeed,
+            driftDir: hDriftDir,
+            driftAmp: hDriftAmp,
+            driftFreq: hDriftFreq,
+            circFreq: hCircFreq,
+            circAmp: hCircAmp,
             size: (0.6 + hLight * 0.7) * hLayer.sizeMul,
             light: Math.min(1.0, hLight * hLayer.brightMul),
             materialId: MAT.ENERGY_ACCENT,
@@ -1431,10 +1547,10 @@ var SHAPE_C = {
     var aT = new Float32Array(n);
     var aCrossR = new Float32Array(n);
     var aCrossAngle = new Float32Array(n);
-    var aZone = new Float32Array(n);
     var aSeed = new Float32Array(n);
     var aPhase = new Float32Array(n);
-    var aSpeed = new Float32Array(n);
+    var aDrift = new Float32Array(n * 3);  // dir, amp, freq
+    var aCirc = new Float32Array(n * 2);   // freq, amp
     var aSize = new Float32Array(n);
     var aBrightness = new Float32Array(n);
     var aColorMix = new Float32Array(n * 3);
@@ -1450,10 +1566,13 @@ var SHAPE_C = {
       aT[i] = p.t;
       aCrossR[i] = p.crossR;
       aCrossAngle[i] = p.crossAngle;
-      aZone[i] = p.zone;
       aSeed[i] = p.seed;
       aPhase[i] = p.phase;
-      aSpeed[i] = p.speed;
+      aDrift[i * 3] = p.driftDir;
+      aDrift[i * 3 + 1] = p.driftAmp;
+      aDrift[i * 3 + 2] = p.driftFreq;
+      aCirc[i * 2] = p.circFreq;
+      aCirc[i * 2 + 1] = p.circAmp;
       aSize[i] = p.size;
       aBrightness[i] = p.light;
       aColorMix[i * 3] = p.color[0];
@@ -1466,10 +1585,10 @@ var SHAPE_C = {
     geo.setAttribute("aT", new THREE.BufferAttribute(aT, 1));
     geo.setAttribute("aCrossR", new THREE.BufferAttribute(aCrossR, 1));
     geo.setAttribute("aCrossAngle", new THREE.BufferAttribute(aCrossAngle, 1));
-    geo.setAttribute("aZone", new THREE.BufferAttribute(aZone, 1));
     geo.setAttribute("aSeed", new THREE.BufferAttribute(aSeed, 1));
     geo.setAttribute("aPhase", new THREE.BufferAttribute(aPhase, 1));
-    geo.setAttribute("aSpeed", new THREE.BufferAttribute(aSpeed, 1));
+    geo.setAttribute("aDrift", new THREE.BufferAttribute(aDrift, 3));
+    geo.setAttribute("aCirc", new THREE.BufferAttribute(aCirc, 2));
     geo.setAttribute("aSize", new THREE.BufferAttribute(aSize, 1));
     geo.setAttribute("aBrightness", new THREE.BufferAttribute(aBrightness, 1));
     geo.setAttribute("aColorMix", new THREE.BufferAttribute(aColorMix, 3));
@@ -1972,6 +2091,49 @@ var SHAPE_C = {
         });
       }
       return { t: t, width: w, thickness: th, density: dens, zones: zones };
+    };
+
+    // Centerline debug visualization: shows spline + control points
+    var centerlineDebugGroup = null;
+    window.__centerlineDebug = false;
+    window.__showCenterlineDebug = function (on) {
+      window.__centerlineDebug = on;
+      if (on && !centerlineDebugGroup && energyCenterline) {
+        centerlineDebugGroup = new THREE.Group();
+
+        // Draw centerline as a line
+        var linePts = [];
+        for (var i = 0; i <= 128; i++) {
+          var u = i / 128;
+          var ct = arcLengthToCurveT(u);
+          linePts.push(energyCenterline.getPoint(ct));
+        }
+        var lineGeo = new THREE.BufferGeometry().setFromPoints(linePts);
+        var lineMat = new THREE.LineBasicMaterial({ color: 0x00ff88, linewidth: 2 });
+        var line = new THREE.Line(lineGeo, lineMat);
+        centerlineDebugGroup.add(line);
+
+        // Draw control points as small spheres
+        for (var c = 0; c < ENERGY_STRUCTURE_CONTROL_POINTS.length; c++) {
+          var cp = ENERGY_STRUCTURE_CONTROL_POINTS[c];
+          var sphGeo = new THREE.SphereGeometry(0.04, 8, 8);
+          var sphMat = new THREE.MeshBasicMaterial({ color: c === 0 ? 0x00ffff : (c === ENERGY_STRUCTURE_CONTROL_POINTS.length - 1 ? 0xff8800 : 0xff4400) });
+          var sph = new THREE.Mesh(sphGeo, sphMat);
+          sph.position.copy(cp);
+          centerlineDebugGroup.add(sph);
+        }
+
+        scene.add(centerlineDebugGroup);
+      }
+      if (centerlineDebugGroup) centerlineDebugGroup.visible = on;
+      // Hide particles + atmosphere when debug is on
+      if (on) {
+        for (var ei = 0; ei < energyStructureObjects.length; ei++) energyStructureObjects[ei].visible = false;
+        for (var ai = 0; ai < atmosphereObjects.length; ai++) atmosphereObjects[ai].visible = false;
+      } else {
+        for (var ei2 = 0; ei2 < energyStructureObjects.length; ei2++) energyStructureObjects[ei2].visible = true;
+        for (var ai2 = 0; ai2 < atmosphereObjects.length; ai2++) atmosphereObjects[ai2].visible = true;
+      }
     };
 
     resize();
