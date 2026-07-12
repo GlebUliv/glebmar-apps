@@ -1073,6 +1073,16 @@ var SHAPE_C = {
     return COLOR_PALE_GREEN;
   }
 
+  // Macro-mass definition for the energy body.  4 large directional masses
+  // along the curve.  Weights sum to 1 and the mixture produces a continuous
+  // field with coherent peaks and calm negative space between them.
+  var MACRO_MASSES = [
+    { center: 0.18, width: 0.12, weight: 0.22, flowSpeed: 0.45, flowPhase: 0.0, flowWavelength: 8.0, color: COLOR_NAVY, colorBias: 0.2 },
+    { center: 0.43, width: 0.15, weight: 0.28, flowSpeed: 0.55, flowPhase: 1.6, flowWavelength: 9.0, color: COLOR_GREEN, colorBias: 0.4 },
+    { center: 0.68, width: 0.15, weight: 0.28, flowSpeed: 0.50, flowPhase: 3.2, flowWavelength: 9.0, color: COLOR_PALE_GREEN, colorBias: 0.5 },
+    { center: 0.88, width: 0.12, weight: 0.22, flowSpeed: 0.40, flowPhase: 4.8, flowWavelength: 8.0, color: COLOR_GREEN, colorBias: 0.3 }
+  ];
+
   function generateEnergyBodyParticles(count) {
     var particles = [];
     var cp = ENERGY_BODY.controlPoints;
@@ -1082,9 +1092,28 @@ var SHAPE_C = {
     var baseSpeed = ENERGY_BODY.baseSpeed;
 
     for (var i = 0; i < count; i++) {
-      // Non-uniform t: concentration around the cube (t ~ 0.5), open ends.
-      var t = 0.5 + gaussian() * 0.35;
+      // Pick a macro mass and sample t from its distribution.
+      var r = Math.random();
+      var cumulative = 0;
+      var macro = MACRO_MASSES[0];
+      for (var m = 0; m < MACRO_MASSES.length; m++) {
+        cumulative += MACRO_MASSES[m].weight;
+        if (r < cumulative) { macro = MACRO_MASSES[m]; break; }
+      }
+      var t = macro.center + gaussian() * macro.width * 0.6;
       t = Math.max(0.001, Math.min(0.999, t));
+
+      // Determine active macro mass and local coordinate within it.
+      var macroIdx = 0;
+      var macroInfluence = 0;
+      for (var m = 0; m < MACRO_MASSES.length; m++) {
+        var mm = MACRO_MASSES[m];
+        var d = (t - mm.center) / mm.width;
+        var infl = mm.weight * Math.exp(-d * d);
+        if (infl > macroInfluence) { macroInfluence = infl; macroIdx = m; }
+      }
+      var activeMacro = MACRO_MASSES[macroIdx];
+      var localT = (t - activeMacro.center) / activeMacro.width;
 
       var seg = t * (n - 1);
       var segIdx = Math.min(Math.floor(seg), n - 2);
@@ -1138,8 +1167,18 @@ var SHAPE_C = {
 
       var light = lightFieldAt(x, y, z);
       var color = pickEnergyBodyColor(light);
+      // Blend macro color bias into the base color for coherent macro identity.
+      var bias = activeMacro.colorBias;
+      color = [
+        color[0] * (1 - bias) + activeMacro.color[0] * bias,
+        color[1] * (1 - bias) + activeMacro.color[1] * bias,
+        color[2] * (1 - bias) + activeMacro.color[2] * bias
+      ];
+
       var size = 0.5 + light * 0.8 + Math.abs(u) * 0.3;
-      var speed = baseSpeed * (1.0 + Math.sin(t * 6.0) * 0.25 + gaussian() * 0.15);
+      // Meso flow: coherent internal wave inside the active macro mass.
+      var speed = baseSpeed + activeMacro.flowSpeed * (1.0 - Math.min(1, Math.abs(localT)));
+      var phase = activeMacro.flowPhase + localT * activeMacro.flowWavelength + (Math.random() - 0.5) * 0.3;
       var materialId = light > 0.65 ? MAT.ENERGY_ACCENT : MAT.ENERGY_STREAM;
 
       particles.push({
@@ -1147,7 +1186,7 @@ var SHAPE_C = {
         color: color,
         size: size,
         light: light,
-        phase: Math.random() * Math.PI * 2,
+        phase: phase,
         speed: speed,
         materialId: materialId
       });
