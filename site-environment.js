@@ -39,11 +39,42 @@ import * as THREE from './vendor/three.module.min.js';
   // Cube width = 2 * CUBE_HALF = 1.1
   var CUBE_WIDTH = 2 * CUBE_HALF;
 
+  // Primary field: wide flowing river, dominant
+  var FIELD_PRIMARY = {
+  radiusMin: 1.35 * CUBE_WIDTH,
+  radiusMax: 2.55 * CUBE_WIDTH,
+  radiusBRatio: 0.82,
+  width: 0.20,                       // thicker ribbon
+  thickness: 0.40,
+  inclX: -18 * Math.PI / 180,
+  inclY: 13 * Math.PI / 180,
+  inclZ: -10 * Math.PI / 180,
+  baseSpeed: 2 * Math.PI / 120,
+  opacity: 1,                     // БЫЛО 0.92 → ПЛОТНЕЕ
+  highlightOpacity: 0.65,
+  highlightFraction: 0.06
+};
+
+  // Secondary field: different inclination, thinner, adds complexity
+  var FIELD_SECONDARY = {
+  radiusMin: 0.90 * CUBE_WIDTH,
+  radiusMax: 1.95 * CUBE_WIDTH,
+  radiusBRatio: 0.75,
+  width: 0.16,                       // thicker
+  thickness: 0.30,
+  inclX: 5 * Math.PI / 180,
+  inclY: -8 * Math.PI / 180,
+  inclZ: 18 * Math.PI / 180,
+  baseSpeed: 2 * Math.PI / 150,
+  opacity: 0.9,
+  highlightOpacity: 0.55,
+  highlightFraction: 0.07
+};
 
   var FIELD_COUNTS = {
-  desktop: { primary: 20000, secondary: 0, dust: 300 },
-  tablet:  { primary: 17000, secondary: 0, dust: 120 },
-  mobile:  { primary: 10000, secondary: 0, dust: 60 }
+  desktop: { primary: 16000, secondary: 700, dust: 300 },
+  tablet:  { primary: 10000, secondary: 4000, dust: 120 },
+  mobile:  { primary: 6000, secondary: 2500,  dust: 60 }
 };
 
   // ─── Colors ───────────────────────────────────────────────
@@ -371,8 +402,243 @@ var SHAPE_C = {
     return Math.min(1.0, light);
   }
 
+  // Classify light intensity into hierarchy tiers
+  // Returns: 0=dark, 1=medium, 2=bright, 3=very bright
+  function lightTier(light) {
+    if (light > 0.75) return 3;
+    if (light > 0.45) return 2;
+    if (light > 0.15) return 1;
+    return 0;
+  }
 
+  // ─── Flow Field — Vector Field for Particle Organization ──
+  // Particles follow flow lines, creating coherent streams.
+  // The flow field defines direction, curvature, and strength.
+  // Particles never choose independent directions — they sample this field.
 
+  // Flow A: Primary diagonal — upper-right → cube → lower-left
+  var FLOW_A = {
+  centerline: [[2.4 + CUBE_OFFSET_X, 1.2 + CUBE_OFFSET_Y, 0.05], [1.8 + CUBE_OFFSET_X, 0.6 + CUBE_OFFSET_Y, 0.0], [CUBE_OFFSET_X, CUBE_OFFSET_Y, 0.0], [-1.8 + CUBE_OFFSET_X, -0.6 + CUBE_OFFSET_Y, 0.0], [-2.4 + CUBE_OFFSET_X, -1.2 + CUBE_OFFSET_Y, 0.05]],
+  flowWidth: 0.06, speedCoherence: 0.015, weight: 0.80
+};
+var FLOW_B = {
+  centerline: [[1.6 + CUBE_OFFSET_X, 0.8 + CUBE_OFFSET_Y, 0.03], [1.2 + CUBE_OFFSET_X, 0.4 + CUBE_OFFSET_Y, 0.0], [CUBE_OFFSET_X, CUBE_OFFSET_Y, 0.0], [-1.2 + CUBE_OFFSET_X, -0.4 + CUBE_OFFSET_Y, 0.0], [-1.6 + CUBE_OFFSET_X, -0.8 + CUBE_OFFSET_Y, 0.03]],
+  flowWidth: 0.04, speedCoherence: 0.018, weight: 0.15
+};
+var FLOW_C = {
+  centerline: [[1.0 + CUBE_OFFSET_X, 0.5 + CUBE_OFFSET_Y, 0.02], [0.6 + CUBE_OFFSET_X, 0.2 + CUBE_OFFSET_Y, 0.0], [CUBE_OFFSET_X, CUBE_OFFSET_Y, 0.0], [-0.6 + CUBE_OFFSET_X, -0.2 + CUBE_OFFSET_Y, 0.0], [-1.0 + CUBE_OFFSET_X, -0.5 + CUBE_OFFSET_Y, 0.02]],
+  flowWidth: 0.03, speedCoherence: 0.020, weight: 0.05
+};
+
+  var ALL_FLOWS = [FLOW_A, FLOW_B, FLOW_C];
+
+  function sampleFlowPosition(flow) {
+    var t = Math.random();
+    var segCount = flow.centerline.length - 1;
+    var segIdx = Math.min(Math.floor(t * segCount), segCount - 1);
+    var segT = t * segCount - segIdx;
+
+    // Smoothstep for organic curvature
+    var st = segT * segT * (3 - 2 * segT);
+
+    var a = flow.centerline[segIdx];
+    var b = flow.centerline[segIdx + 1];
+
+    var x = a[0] + (b[0] - a[0]) * st;
+    var y = a[1] + (b[1] - a[1]) * st;
+    var z = a[2] + (b[2] - a[2]) * st;
+
+    // Subtle turbulence — never destroys macro flow
+    x += gaussian() * flow.flowWidth;
+    y += gaussian() * flow.flowWidth;
+    z += gaussian() * flow.flowWidth * 0.5;
+
+    return { x: x, y: y, z: z };
+  }
+
+  // Inverse mapping: world position → stream coordinates (theta, radius)
+  // This is the reverse of what the shader does: shader computes
+  // centerLocal = (radius*cos(theta), radius*bRatio*sin(theta), 0) then rotates.
+  // We undo the rotation (transpose) then extract theta and radius.
+  function worldToStream(wx, wy, wz, rotMat, bRatio) {
+    var el = rotMat.elements;
+    var lx = wx - CUBE_OFFSET_X;
+    var ly = wy - CUBE_OFFSET_Y;
+    var lz = wz; 
+
+    var theta = Math.atan2(ly / bRatio, lx);
+    if (theta < 0) theta += Math.PI * 2;
+    var radius = Math.sqrt(lx * lx + (ly / bRatio) * (ly / bRatio));
+
+    return { theta: theta, radius: radius };
+  }
+
+  function pickFlow() {
+    var r = Math.random();
+    var cumWeight = 0;
+    for (var fi = 0; fi < ALL_FLOWS.length; fi++) {
+      cumWeight += ALL_FLOWS[fi].weight;
+      if (r < cumWeight) return ALL_FLOWS[fi];
+    }
+    return ALL_FLOWS[0];
+  }
+
+  // ─── Energy Band — Dominant Volumetric Ribbon ─────────────
+  // ONE dominant energy structure with secondary streams.
+  // Magnetic field lines: converge, diverge, split, merge.
+  // Field bends around the cube at (CUBE_OFFSET_X, CUBE_OFFSET_Y).
+  // Cross section: dense core → medium → fragmentation → dust
+  // Edges dissolve naturally — no abrupt termination.
+
+  var RIBBON = {
+  centerline: [
+    [2.4 + CUBE_OFFSET_X, 1.2 + CUBE_OFFSET_Y, 0.05], [1.8 + CUBE_OFFSET_X, 0.6 + CUBE_OFFSET_Y, 0.0], [CUBE_OFFSET_X, CUBE_OFFSET_Y, 0.0], [-1.8 + CUBE_OFFSET_X, -0.6 + CUBE_OFFSET_Y, 0.0], [-2.4 + CUBE_OFFSET_X, -1.2 + CUBE_OFFSET_Y, 0.05]
+  ],
+  coreRadius: [0.12, 0.15, 0.18, 0.15, 0.12],
+  mediumRadius: [0.30, 0.36, 0.42, 0.36, 0.30],
+  fragmentRadius: [0.52, 0.60, 0.68, 0.60, 0.52],
+  dustRadius: [0.72, 0.80, 0.88, 0.80, 0.72],
+  textureStreaks: [1.3, 1.1, 1.4, 1.1, 1.3],
+  veinCount: 3,
+  veinAmplitude: 0.12,
+  speedCoherence: 0.005,
+  weight: 0.88
+};
+
+  // Secondary stream A — subtle accent, thinner, same diagonal
+  var RIBBON_STREAM_A = {
+  centerline: [
+    [1.6 + CUBE_OFFSET_X, 0.8 + CUBE_OFFSET_Y, 0.03], [1.2 + CUBE_OFFSET_X, 0.4 + CUBE_OFFSET_Y, 0.0], [CUBE_OFFSET_X, CUBE_OFFSET_Y, 0.0], [-1.2 + CUBE_OFFSET_X, -0.4 + CUBE_OFFSET_Y, 0.0], [-1.6 + CUBE_OFFSET_X, -0.8 + CUBE_OFFSET_Y, 0.03]
+  ],
+  coreRadius: [0.08, 0.10, 0.12, 0.10, 0.08],
+  mediumRadius: [0.18, 0.22, 0.26, 0.22, 0.18],
+  fragmentRadius: [0.32, 0.38, 0.44, 0.38, 0.32],
+  dustRadius: [0.48, 0.54, 0.60, 0.54, 0.48],
+  textureStreaks: [1.0, 0.9, 1.1, 0.9, 1.0],
+  veinCount: 2,
+  veinAmplitude: 0.08,
+  speedCoherence: 0.008,
+  weight: 0.10
+};
+
+  // Secondary stream B — faint inner trace, barely visible
+  var RIBBON_STREAM_B = {
+  centerline: [
+    [1.0 + CUBE_OFFSET_X, 0.5 + CUBE_OFFSET_Y, 0.02], [0.6 + CUBE_OFFSET_X, 0.2 + CUBE_OFFSET_Y, 0.0], [CUBE_OFFSET_X, CUBE_OFFSET_Y, 0.0], [-0.6 + CUBE_OFFSET_X, -0.2 + CUBE_OFFSET_Y, 0.0], [-1.0 + CUBE_OFFSET_X, -0.5 + CUBE_OFFSET_Y, 0.02]
+  ],
+  coreRadius: [0.06, 0.08, 0.10, 0.08, 0.06],
+  mediumRadius: [0.14, 0.18, 0.22, 0.18, 0.14],
+  fragmentRadius: [0.26, 0.32, 0.38, 0.32, 0.26],
+  dustRadius: [0.40, 0.46, 0.52, 0.46, 0.40],
+  textureStreaks: [0.9, 0.8, 1.0, 0.8, 0.9],
+  veinCount: 1,
+  veinAmplitude: 0.05,
+  speedCoherence: 0.010,
+  weight: 0.02
+};
+
+  var RIBBON_STREAMS = [RIBBON, RIBBON_STREAM_A, RIBBON_STREAM_B];
+
+  function pickRibbonStream() {
+    var r = Math.random();
+    var cum = 0;
+    for (var i = 0; i < RIBBON_STREAMS.length; i++) {
+      cum += RIBBON_STREAMS[i].weight;
+      if (r < cum) return RIBBON_STREAMS[i];
+    }
+    return RIBBON;
+  }
+
+  // Sample a position within a ribbon stream cross-section
+  // Returns { x, y, z, crossDist, crossTier, t, texDensity, stream }
+  function sampleRibbonPosition() {
+    var stream = pickRibbonStream();
+    var cl = stream.centerline;
+    var t = Math.random();
+    var segCount = cl.length - 1;
+    var segIdx = Math.min(Math.floor(t * segCount), segCount - 1);
+    var segT = t * segCount - segIdx;
+    var st = segT * segT * (3 - 2 * segT);
+
+    var a = cl[segIdx];
+    var b = cl[segIdx + 1];
+
+    var cx = a[0] + (b[0] - a[0]) * st;
+    var cy = a[1] + (b[1] - a[1]) * st;
+    var cz = a[2] + (b[2] - a[2]) * st;
+
+    // Interpolate cross-section radii
+    var coreR = stream.coreRadius[segIdx] + (stream.coreRadius[segIdx + 1] - stream.coreRadius[segIdx]) * st;
+    var medR  = stream.mediumRadius[segIdx] + (stream.mediumRadius[segIdx + 1] - stream.mediumRadius[segIdx]) * st;
+    var fragR = stream.fragmentRadius[segIdx] + (stream.fragmentRadius[segIdx + 1] - stream.fragmentRadius[segIdx]) * st;
+    var dustR = stream.dustRadius[segIdx] + (stream.dustRadius[segIdx + 1] - stream.dustRadius[segIdx]) * st;
+
+    // Texture density at this point
+    var texIdx0 = segIdx, texIdx1 = Math.min(segIdx + 1, stream.textureStreaks.length - 1);
+    var texDensity = stream.textureStreaks[texIdx0] + (stream.textureStreaks[texIdx1] - stream.textureStreaks[texIdx0]) * st;
+
+    // Cross-section tier: 60% core, 30% medium, 8% fragment, 2% dust
+    // Concentrated core → coherent band structure
+    var tierRoll = Math.random();
+    var crossDist, crossTier;
+    if (tierRoll < 0.60) {
+      crossDist = Math.pow(Math.random(), 0.90) * coreR;
+      crossTier = 0;
+    } else if (tierRoll < 0.90) {
+      crossDist = coreR + Math.random() * (medR - coreR);
+      crossTier = 1;
+    } else if (tierRoll < 0.98) {
+      crossDist = medR + Math.random() * (fragR - medR);
+      crossTier = 2;
+    } else {
+      crossDist = fragR + Math.random() * (dustR - fragR);
+      crossTier = 3;
+    }
+
+    // Continuous density profile: dense center → medium → outer → edge → space
+    // Uses smoothstep for continuous falloff, never abrupt
+    var normDist = crossDist / dustR; // 0 at center, 1 at edge
+    var densityProfile = Math.exp(-normDist * normDist * 2.5); // Gaussian falloff
+
+    // Internal energy veins — longitudinal streaks that merge and separate
+    // Creates perception of energy currents inside one larger structure
+    var veinCount = stream.veinCount || 0;
+    var veinAmp = stream.veinAmplitude || 0;
+    if (veinCount > 0 && crossTier < 2) {
+      var veinMod = 0;
+      for (var vi = 0; vi < veinCount; vi++) {
+        var veinFreq = 2.0 + vi * 1.5;
+        var veinPhase = vi * 1.7;
+        veinMod += Math.sin(t * Math.PI * veinFreq + veinPhase) * (1.0 / veinCount);
+      }
+      // Veins pull particles slightly toward/away from center — subtle
+      crossDist *= (1.0 + veinMod * veinAmp);
+      crossDist = Math.min(crossDist, dustR * 0.95);
+    }
+
+    // Texture modulation — calm regions push particles outward
+    if (Math.random() > texDensity * 0.92 && crossTier < 2) {
+      crossDist *= 1.08;
+    }
+
+    // Cross-section offset — flattened in y, thin in z
+    var angle = Math.random() * Math.PI * 2;
+    var dx = Math.cos(angle) * crossDist;
+    var dy = Math.sin(angle) * crossDist * 0.70;
+    var dz = Math.sin(angle) * crossDist * 0.30;
+
+    return {
+      x: cx + dx,
+      y: cy + dy,
+      z: cz + dz,
+      crossDist: crossDist,
+      crossTier: crossTier,
+      densityProfile: densityProfile,
+      t: t,
+      texDensity: texDensity,
+      stream: stream
+    };
+  }
 
   // ─── GLSL Material Functions (shared by all shaders) ──────
   var glslMaterialResponse = [
@@ -542,7 +808,6 @@ var SHAPE_C = {
     "}"
   ].join("\n");
 
-  
   var cubeHighlightFragmentShader = [
     glslMaterialDebugColor,
     "varying vec3 vColor;",
@@ -821,6 +1086,179 @@ var SHAPE_C = {
     scene.add(cubeGroup);
   }
 
+  // ─── Field Shaders ────────────────────────────────────────
+  // The field is a volumetric particle river.
+  // Particles flow along noise-perturbed stream lines.
+  // The field breathes and shifts density over time.
+  // The cube emerges through a gradual density gradient near center.
+  var fieldVertexShader = [
+    glslMaterialResponse,
+    "attribute float aStreamRadius;",
+    "attribute float aStreamPos;",
+    "attribute float aSeed;",
+    "attribute float aWidthOffset;",
+    "attribute float aThicknessOffset;",
+    "attribute float aPhase;",
+    "attribute float aSpeed;",
+    "attribute float aSize;",
+    "attribute float aBrightness;",
+    "attribute vec3 aColorMix;",
+    "attribute float aDensityBias;",
+    "attribute float aMaterialId;",
+    "uniform float uTime;",
+    "uniform float uPointScale;",
+    "uniform float uReduceMotion;",
+    "uniform float uScrollProgress;",
+    "uniform float uEntrance;",
+    "uniform float uCullMode;",
+    "uniform float uCubeZ;",
+    "uniform float uRadiusBRatio;",
+    "uniform float uHalfWidth;",
+    "uniform mat3 uRotation;",
+    "uniform vec3 uCubeOffset;",
+    "varying vec3 vColor;",
+    "varying float vDiffuse;",
+    "varying float vEmission;",
+    "varying float vSaturation;",
+    "varying float vSoftness;",
+    "varying float vMaterialId;",
+    "void main() {",
+    "  float flowTime = uReduceMotion > 0.5 ? 0.0 : uTime;",
+    "  float theta = aStreamPos * 6.283185 + flowTime * aSpeed;",
+    // Noise-perturbed stream line — organic, not a perfect ellipse
+    "  float n1 = sin(theta * 2.3 + aSeed * 6.283);",
+    "  float n2 = cos(theta * 1.7 + aSeed * 4.56);",
+    "  float n3 = sin(theta * 3.1 + aSeed * 2.0);",
+    "  float n4 = sin(theta * 5.5 + aSeed * 8.1);",
+    "  float n5 = cos(theta * 7.3 + aSeed * 3.7);",
+    "  vec3 centerLocal = vec3(",
+    "    aStreamRadius * cos(theta) + n1 * aStreamRadius * 0.04 + n4 * aStreamRadius * 0.015,",
+    "    aStreamRadius * uRadiusBRatio * sin(theta) + n2 * aStreamRadius * 0.03 + n5 * aStreamRadius * 0.01,",
+    "    n3 * aStreamRadius * 0.025 + n4 * aStreamRadius * 0.01",
+    "  );",
+    "  vec3 center = uRotation * centerLocal;",
+    // Normal and binormal for width/thickness offsets
+    "  vec3 normalLocal = normalize(vec3(uRadiusBRatio * cos(theta), sin(theta), 0.0));",
+    "  vec3 normal = uRotation * normalLocal;",
+    "  vec3 binormal = normalize(cross(normalize(center + vec3(0.001)), normal));",
+    "  vec3 worldPos = center + normal * aWidthOffset + binormal * aThicknessOffset + uCubeOffset;",
+    // Entrance scale
+    "  worldPos *= mix(0.75, 1.0, uEntrance);",
+    // Scroll dispersion
+    "  worldPos += normalize(worldPos + vec3(0.001)) * uScrollProgress * 0.4;",
+    "  vec4 mvPosition = modelViewMatrix * vec4(worldPos, 1.0);",
+    // Front/back culling for cube depth integration
+    "  float zDiff = mvPosition.z - uCubeZ;",
+    "  if (uCullMode < 0.5 && zDiff > 0.0) {",
+    "    gl_PointSize = 0.0;",
+    "    gl_Position = vec4(2.0, 2.0, 2.0, 1.0);",
+    "    return;",
+    "  }",
+    "  if (uCullMode > 0.5 && zDiff <= 0.0) {",
+    "    gl_PointSize = 0.0;",
+    "    gl_Position = vec4(2.0, 2.0, 2.0, 1.0);",
+    "    return;",
+    "  }",
+    // Density modulation — fluid-like, not symmetric
+    "  float densityShift = flowTime * 0.08;",
+    "  float densityMod = 0.65",
+    "    + 0.30 * sin(theta * 1.5 + aSeed * 3.0 + densityShift)",
+    "    + 0.18 * cos(theta * 2.7 + aSeed * 5.0 + densityShift * 0.7);",
+    // Breathing — slow density oscillation
+    "  float breath = sin(flowTime * 0.3 + aPhase) * 0.03;",
+    "  densityMod += breath;",
+    "  densityMod = max(0.2, densityMod);",
+    // Border dissolve — particles at river edges fade naturally
+    "  float widthFactor = 1.0 - abs(aWidthOffset) / uHalfWidth;",
+    "  widthFactor = smoothstep(0.0, 0.4, widthFactor);",
+    // Cube emergence — gradual density reduction near center (negative space)
+    "  float distToCenter = length(mvPosition.xy);",
+    "  float clarityFactor = smoothstep(0.40, 1.1, distToCenter);",
+    "  float frontWeight = smoothstep(-0.15, 0.35, zDiff);",
+    // Material response — separate diffuse and emission
+    "  float matDiffuse, matEmission, matSize, matSat, matSoft;",
+    "  materialResponse(aMaterialId, aBrightness, widthFactor, matDiffuse, matEmission, matSize, matSat, matSoft);",
+    "  vColor = aColorMix;",
+    "  vMaterialId = aMaterialId;",
+    "  float clarityMod = mix(1.0, mix(0.20, 1.0, clarityFactor), frontWeight);",
+    "  vDiffuse = matDiffuse * densityMod * widthFactor * clarityMod;",
+    // Stream emission: center emits more, edges less, density reinforces
+    "  vEmission = matEmission * widthFactor * densityMod * clarityMod;",
+    "  vSaturation = matSat;",
+    "  vSoftness = matSoft;",
+    // Depth attenuation
+    "  float depth = -mvPosition.z;",
+    "  float depthFactor = smoothstep(3.0, 7.5, depth);",
+    "  gl_PointSize = max(1.0, aSize * uPointScale * matSize * (1.0 - depthFactor * 0.25) / depth);",
+    "  gl_Position = projectionMatrix * mvPosition;",
+    "}"
+  ].join("\n");
+
+  var fieldFragmentShader = [
+    glslMaterialDebugColor,
+    "varying vec3 vColor;",
+    "varying float vDiffuse;",
+    "varying float vEmission;",
+    "varying float vSaturation;",
+    "varying float vSoftness;",
+    "varying float vMaterialId;",
+    "uniform float uOpacity;",
+    "uniform float uLightDebug;",
+    "uniform float uMaterialDebug;",
+    "uniform float uEmissionDebug;",
+    "void main() {",
+    "  vec2 coord = gl_PointCoord - vec2(0.5);",
+    "  float dist = length(coord);",
+    "  if (dist > 0.5) discard;",
+    "  float edge = 0.10 + vSoftness * 0.32;",
+    "  float alpha = smoothstep(0.5, edge, dist);",
+    "  if (uMaterialDebug > 0.5) {",
+    "    gl_FragColor = vec4(materialDebugColor(vMaterialId), alpha);",
+    "  } else if (uLightDebug > 0.5) {",
+    "    gl_FragColor = vec4(vec3(vDiffuse), alpha);",
+    "  } else if (uEmissionDebug > 0.5) {",
+    "    gl_FragColor = vec4(vec3(vEmission), alpha);",
+    "  } else {",
+    "    vec3 satColor = mix(vec3(dot(vColor, vec3(0.299, 0.587, 0.114))), vColor, vSaturation);",
+    "    vec3 diffuseColor = satColor * vDiffuse;",
+    "    vec3 emissiveColor = mix(vColor, vec3(0.8, 1.0, 0.9), 0.6) * vEmission * 1.3;",
+    "    gl_FragColor = vec4(diffuseColor + emissiveColor, alpha * uOpacity);",
+    "  }",
+    "}"
+  ].join("\n");
+
+  var fieldHighlightFragmentShader = [
+    glslMaterialDebugColor,
+    "varying vec3 vColor;",
+    "varying float vDiffuse;",
+    "varying float vEmission;",
+    "varying float vSaturation;",
+    "varying float vSoftness;",
+    "varying float vMaterialId;",
+    "uniform float uOpacity;",
+    "uniform float uLightDebug;",
+    "uniform float uMaterialDebug;",
+    "uniform float uEmissionDebug;",
+    "void main() {",
+    "  vec2 coord = gl_PointCoord - vec2(0.5);",
+    "  float dist = length(coord);",
+    "  if (dist > 0.5) discard;",
+    "  float edge = vSoftness * 0.4;",
+    "  float alpha = smoothstep(0.5, edge, dist);",
+    "  if (uMaterialDebug > 0.5) {",
+    "    gl_FragColor = vec4(materialDebugColor(vMaterialId), alpha);",
+    "  } else if (uLightDebug > 0.5) {",
+    "    gl_FragColor = vec4(vec3(vDiffuse), alpha);",
+    "  } else if (uEmissionDebug > 0.5) {",
+    "    gl_FragColor = vec4(vec3(vEmission), alpha);",
+    "  } else {",
+    "    vec3 satColor = mix(vec3(dot(vColor, vec3(0.299, 0.587, 0.114))), vColor, vSaturation);",
+    "    vec3 diffuseColor = satColor * vDiffuse;",
+    "    vec3 emissiveColor = mix(vColor, vec3(0.9, 1.0, 0.95), 0.8) * vEmission * 1.5;",
+    "    gl_FragColor = vec4(diffuseColor + emissiveColor, alpha * uOpacity);",
+    "  }",
+    "}"
+  ].join("\n");
 
   // ─── Dust Shaders ─────────────────────────────────────────
   var dustVertexShader = [
@@ -895,6 +1333,295 @@ var SHAPE_C = {
     "}"
   ].join("\n");
 
+  // ─── Field Particle Generation ────────────────────────────
+  function pickPrimaryColor() {
+    var r = Math.random();
+    if (r < 0.60) return COLOR_NAVY;
+    if (r < 0.90) return COLOR_GREEN;
+    return Math.random() < 0.5 ? COLOR_PALE_GREEN : COLOR_SOFT_WHITE;
+  }
+
+  function pickSecondaryColor() {
+    var r = Math.random();
+    if (r < 0.45) return COLOR_NAVY;
+    if (r < 0.85) return COLOR_GREEN;
+    return Math.random() < 0.5 ? COLOR_PALE_GREEN : COLOR_SOFT_WHITE;
+  }
+
+  function pickHighlightColor() {
+    return Math.random() < 0.7 ? COLOR_GREEN : COLOR_PALE_GREEN;
+  }
+
+  function generateFieldParticles(count, config, isPrimary, densitySeed, rotMat) {
+    var particles = [];
+    var highlightCount = Math.floor(count * config.highlightFraction);
+    var mainCount = count - highlightCount;
+    var colorPicker = isPrimary ? pickPrimaryColor : pickSecondaryColor;
+    var halfWidth = config.width * 0.5;
+    var radiusRange = config.radiusMax - config.radiusMin;
+    var bRatio = config.radiusBRatio;
+
+    // Depth layer assignment (unchanged from Layered Depth V1)
+    var DEPTH_LAYERS = [
+      { id: 1, fraction: 0.05, thickBase: -2.0, thickRange: 0.5, sizeMul: 2.0, brightMul: 1.25, opacityMul: 0.85 },
+      { id: 2, fraction: 0.58, thickBase: 0.0,  thickRange: 0.2, sizeMul: 1.0, brightMul: 1.0,  opacityMul: 1.0 },
+      { id: 3, fraction: 0.30, thickBase: 2.0,  thickRange: 0.6, sizeMul: 0.45, brightMul: 0.55, opacityMul: 0.70 },
+      { id: 4, fraction: 0.07, thickBase: 4.0,  thickRange: 0.6, sizeMul: 0.18, brightMul: 0.25, opacityMul: 0.40 }
+    ];
+
+    function pickDepthLayer() {
+      var r = Math.random();
+      var cum = 0;
+      for (var i = 0; i < DEPTH_LAYERS.length; i++) {
+        cum += DEPTH_LAYERS[i].fraction;
+        if (r < cum) return DEPTH_LAYERS[i];
+      }
+      return DEPTH_LAYERS[1];
+    }
+
+    // Cross-section tier → size/brightness multipliers
+    // Core: largest, brightest. Dust: smallest, dimmest.
+    var TIER_MUL = [
+      { sizeMul: 1.6, brightMul: 1.4 },   // core — larger, brighter
+      { sizeMul: 1.0, brightMul: 1.0 },   // medium
+      { sizeMul: 0.5, brightMul: 0.5 },   // fragment
+      { sizeMul: 0.2, brightMul: 0.2 }    // dust — smallest, dimmest
+    ];
+
+    // Ribbon-based particle generation:
+    // 1. Sample position along the single dominant ribbon
+    // 2. Cross-section tier determines density/size/brightness
+    // 3. Accept based on density field
+    // 4. Map to shader stream coordinates
+    // 5. Depth layer + light field applied
+    for (var i = 0; i < mainCount; i++) {
+      var theta = 0, streamRadius = 0, density = 0, light = 0;
+      var widthOff = 0, thickOff = 0, flowSpeed = 0;
+      var accepted = false;
+      var layer = pickDepthLayer();
+
+      for (var attempt = 0; attempt < 30; attempt++) {
+        var rpos = sampleRibbonPosition();
+
+        density = totalDensityAt(rpos.x, rpos.y, rpos.z);
+        // Acceptance: continuous density profile × shape density × tier
+        var tierAccept = [1.0, 0.92, 0.65, 0.25][rpos.crossTier];
+        var profileAccept = rpos.densityProfile;
+        if (Math.random() < density * tierAccept * profileAccept) {
+          var stream = worldToStream(rpos.x, rpos.y, rpos.z, rotMat, bRatio);
+          theta = stream.theta;
+          streamRadius = Math.max(config.radiusMin, Math.min(config.radiusMax, stream.radius));
+
+          // Width offset from cross-section distance
+          widthOff = gaussian() * 0.025 + (rpos.crossDist - 0.3) * 0.06;
+
+          // Depth layer controls thickness
+          thickOff = layer.thickBase + gaussian() * layer.thickRange;
+
+          // Coherent speed — particles in same stream move together
+          var sc = rpos.stream.speedCoherence;
+          flowSpeed = config.baseSpeed * (1.0 - sc * 0.5 + Math.random() * sc);
+
+          light = lightFieldAt(rpos.x, rpos.y, rpos.z);
+          accepted = true;
+          break;
+        }
+      }
+
+      if (!accepted) {
+        // Rejected — skip particle entirely, no island scatter
+        i--;
+        continue;
+      }
+
+      var c = colorPicker();
+      var tier = lightTier(light);
+      var materialId;
+      var sizeMul;
+      if (tier === 3) { materialId = MAT.ENERGY_STREAM; sizeMul = 1.0; }
+      else if (tier === 2) { materialId = MAT.ENERGY_STREAM; sizeMul = 0.75; }
+      else if (tier === 1) { materialId = MAT.TRANSITION; sizeMul = 0.5; }
+      else { materialId = MAT.TRANSITION; sizeMul = 0.3; }
+
+      // Apply depth layer multipliers
+      var finalSize = ((isPrimary ? 0.6 : 0.4) + density * (isPrimary ? 1.2 : 1.0) * sizeMul) * layer.sizeMul;
+      particles.push({
+        streamRadius: streamRadius,
+        streamPos: theta / (Math.PI * 2),
+        seed: Math.random(),
+        widthOffset: widthOff,
+        thicknessOffset: thickOff,
+        phase: Math.random() * Math.PI * 2,
+        speed: flowSpeed,
+        size: finalSize,
+        light: Math.min(1.0, light),
+        materialId: materialId,
+        color: c,
+        densityBias: density,
+        isHighlight: false
+      });
+    }
+
+    // Highlights — only in ribbon core where light is strong
+    for (var j = 0; j < highlightCount; j++) {
+      var hTheta = 0, hRadius = 0, hDensity = 0, hLight = 0;
+      var hWidth = 0, hThick = 0, hSpeed = 0;
+      var hAccepted = false;
+      var hLayer = Math.random() < 0.25 ? DEPTH_LAYERS[0] : DEPTH_LAYERS[1];
+
+      for (var attempt = 0; attempt < 50; attempt++) {
+        var hRpos = sampleRibbonPosition();
+
+        // Only core and medium tiers can produce highlights
+        if (hRpos.crossTier > 1) continue;
+
+        hDensity = totalDensityAt(hRpos.x, hRpos.y, hRpos.z);
+        hLight = lightFieldAt(hRpos.x, hRpos.y, hRpos.z);
+
+        if (hLight > 0.7 && hDensity > 0.55 && Math.random() < hLight * hDensity * 1.4) {
+          var hStream = worldToStream(hRpos.x, hRpos.y, hRpos.z, rotMat, bRatio);
+          hTheta = hStream.theta;
+          hRadius = Math.max(config.radiusMin, Math.min(config.radiusMax, hStream.radius));
+          hWidth = gaussian() * 0.04;
+          hThick = hLayer.thickBase + gaussian() * hLayer.thickRange * 0.5;
+          var hSC = hRpos.stream.speedCoherence;
+          hSpeed = config.baseSpeed * (1.0 - hSC * 0.5 + Math.random() * hSC);
+          hAccepted = true;
+          break;
+        }
+      }
+
+      if (!hAccepted) continue;
+
+      var cH = pickHighlightColor();
+      particles.push({
+        streamRadius: hRadius,
+        streamPos: hTheta / (Math.PI * 2),
+        seed: Math.random(),
+        widthOffset: hWidth,
+        thicknessOffset: hThick,
+        phase: Math.random() * Math.PI * 2,
+        speed: hSpeed,
+        size: (0.6 + hLight * 0.7) * hLayer.sizeMul,
+        light: Math.min(1.0, hLight * hLayer.brightMul),
+        materialId: MAT.ENERGY_ACCENT,
+        color: cH,
+        densityBias: hDensity,
+        isHighlight: true
+      });
+    }
+
+    return particles;
+  }
+
+  // ─── Field System Creation ────────────────────────────────
+  function fillFieldGeometry(geo, particles) {
+    var n = particles.length;
+    var pos = new Float32Array(n * 3);
+    var aStreamRadius = new Float32Array(n);
+    var aStreamPos = new Float32Array(n);
+    var aSeed = new Float32Array(n);
+    var aWidthOffset = new Float32Array(n);
+    var aThicknessOffset = new Float32Array(n);
+    var aPhase = new Float32Array(n);
+    var aSpeed = new Float32Array(n);
+    var aSize = new Float32Array(n);
+    var aLight = new Float32Array(n);
+    var aColorMix = new Float32Array(n * 3);
+    var aDensityBias = new Float32Array(n);
+    var aMaterialId = new Float32Array(n);
+
+    for (var i = 0; i < n; i++) {
+      var p = particles[i];
+      pos[i * 3] = 0; pos[i * 3 + 1] = 0; pos[i * 3 + 2] = 0;
+      aStreamRadius[i] = p.streamRadius;
+      aStreamPos[i] = p.streamPos;
+      aSeed[i] = p.seed;
+      aWidthOffset[i] = p.widthOffset;
+      aThicknessOffset[i] = p.thicknessOffset;
+      aPhase[i] = p.phase;
+      aSpeed[i] = p.speed;
+      aSize[i] = p.size;
+      aLight[i] = p.light;
+      aColorMix[i * 3] = p.color[0];
+      aColorMix[i * 3 + 1] = p.color[1];
+      aColorMix[i * 3 + 2] = p.color[2];
+      aDensityBias[i] = p.densityBias;
+      aMaterialId[i] = p.materialId;
+    }
+
+    geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute("aStreamRadius", new THREE.BufferAttribute(aStreamRadius, 1));
+    geo.setAttribute("aStreamPos", new THREE.BufferAttribute(aStreamPos, 1));
+    geo.setAttribute("aSeed", new THREE.BufferAttribute(aSeed, 1));
+    geo.setAttribute("aWidthOffset", new THREE.BufferAttribute(aWidthOffset, 1));
+    geo.setAttribute("aThicknessOffset", new THREE.BufferAttribute(aThicknessOffset, 1));
+    geo.setAttribute("aPhase", new THREE.BufferAttribute(aPhase, 1));
+    geo.setAttribute("aSpeed", new THREE.BufferAttribute(aSpeed, 1));
+    geo.setAttribute("aSize", new THREE.BufferAttribute(aSize, 1));
+    geo.setAttribute("aBrightness", new THREE.BufferAttribute(aLight, 1));
+    geo.setAttribute("aColorMix", new THREE.BufferAttribute(aColorMix, 3));
+    geo.setAttribute("aDensityBias", new THREE.BufferAttribute(aDensityBias, 1));
+    geo.setAttribute("aMaterialId", new THREE.BufferAttribute(aMaterialId, 1));
+  }
+
+  function createFieldSystem(config, count, isPrimary, densitySeed) {
+    var rotationMat3 = eulerToMat3(config.inclX, config.inclY, config.inclZ);
+    var cubeViewZ = -camera.position.z;
+
+    var particles = generateFieldParticles(count, config, isPrimary, densitySeed, rotationMat3);
+    var mainParts = particles.filter(function (p) { return !p.isHighlight; });
+    var highlightParts = particles.filter(function (p) { return p.isHighlight; });
+
+    var sharedUniforms = {
+      uTime: uTime,
+      uPointScale: uScaleGlobal,
+      uReduceMotion: uReduceMotion,
+      uScrollProgress: uScrollProgress,
+      uEntrance: uEntranceProgress,
+      uCubeZ: { value: cubeViewZ },
+      uRadiusBRatio: { value: config.radiusBRatio },
+      uHalfWidth: { value: config.width * 0.5 },
+      uRotation: { value: rotationMat3 },
+      uCubeOffset: { value: new THREE.Vector3(CUBE_OFFSET_X, CUBE_OFFSET_Y, 0) }
+    };
+
+    function makeMaterial(cullMode, opacity, isHighlight) {
+      return new THREE.ShaderMaterial({
+        uniforms: Object.assign({}, sharedUniforms, {
+          uCullMode: { value: cullMode },
+          uOpacity: { value: opacity },
+          uLightDebug: uLightDebug, uMaterialDebug: uMaterialDebug,
+          uEmissionDebug: uEmissionDebug
+        }),
+        vertexShader: fieldVertexShader,
+        fragmentShader: isHighlight ? fieldHighlightFragmentShader : fieldFragmentShader,
+        transparent: true,
+        depthWrite: false,
+        depthTest: true,
+        blending: isHighlight ? THREE.AdditiveBlending : THREE.NormalBlending
+      });
+    }
+
+    function makePoints(parts, cullMode, opacity, isHighlight, renderOrder) {
+      var geo = new THREE.BufferGeometry();
+      fillFieldGeometry(geo, parts);
+      var mat = makeMaterial(cullMode, opacity, isHighlight);
+      var pts = new THREE.Points(geo, mat);
+      pts.frustumCulled = false;
+      pts.renderOrder = renderOrder;
+      scene.add(pts);
+      fieldObjects.push(pts);
+      materialOpacityRefs.push({ uniform: mat.uniforms.uOpacity, base: opacity, isDust: false });
+    }
+
+    // Back: renderOrder -1 (behind cube)
+    // Front: renderOrder 1 (in front of cube)
+    makePoints(mainParts, 0.0, config.opacity, false, -1);
+    makePoints(mainParts, 1.0, config.opacity, false, 1);
+    makePoints(highlightParts, 0.0, config.highlightOpacity * 1.8, true, -1);
+    makePoints(highlightParts, 1.0, config.highlightOpacity * 1.8, true, 1);
+  }
 
   // ─── Dust System Creation ─────────────────────────────────
   function createDustSystem(count, opacity) {
@@ -974,281 +1701,6 @@ var SHAPE_C = {
     scene.add(pts);
     fieldObjects.push(pts);
     materialOpacityRefs.push({ uniform: mat.uniforms.uOpacity, base: opacity, isDust: true });
-  }
-
-  // ─── Energy Body V2 — Organic Ribbon ──────────────────────
-  // A single continuous volumetric body that wraps around the cube.
-  // It is not a ring, not an orbit, and not a mathematically perfect ellipse.
-  // The body follows a hand-authored 3D Catmull-Rom curve, with variable
-  // cross-section, compression/relaxation zones, and internal flow.
-
-  var energyBodyVertexShader = [
-    glslMaterialResponse,
-    "attribute vec3 aColorMix;",
-    "attribute float aSize;",
-    "attribute float aBrightness;",
-    "attribute float aPhase;",
-    "attribute float aMaterialId;",
-    "attribute float aSpeed;",
-    "uniform float uTime;",
-    "uniform float uPointScale;",
-    "uniform float uReduceMotion;",
-    "uniform float uEntrance;",
-    "uniform float uScrollProgress;",
-    "varying vec3 vColor;",
-    "varying float vDiffuse;",
-    "varying float vEmission;",
-    "varying float vSaturation;",
-    "varying float vSoftness;",
-    "varying float vMaterialId;",
-    "void main() {",
-    "  vColor = aColorMix;",
-    "  vMaterialId = aMaterialId;",
-    "  float matDiffuse, matEmission, matSize, matSat, matSoft;",
-    "  materialResponse(aMaterialId, aBrightness, 1.0, matDiffuse, matEmission, matSize, matSat, matSoft);",
-    "  float t = uReduceMotion > 0.5 ? 0.0 : uTime;",
-    "  vec3 pos = position;",
-    "  float flow = sin(t * aSpeed + aPhase) * 0.02;",
-    "  pos += normalize(pos + vec3(0.001)) * flow;",
-    "  pos += normalize(pos + vec3(0.001)) * uScrollProgress * 0.25;",
-    "  pos *= mix(0.75, 1.0, uEntrance);",
-    "  vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);",
-    "  vDiffuse = matDiffuse;",
-    "  vEmission = matEmission;",
-    "  vSaturation = matSat;",
-    "  vSoftness = matSoft;",
-    "  float depth = -mvPosition.z;",
-    "  float depthFactor = smoothstep(3.0, 8.0, depth);",
-    "  gl_PointSize = max(1.0, aSize * uPointScale * matSize * (1.0 - depthFactor * 0.3) / depth);",
-    "  gl_Position = projectionMatrix * mvPosition;",
-    "}"
-  ].join("\n");
-
-  var ENERGY_BODY = {
-    controlPoints: [
-      [2.6,  1.4,  0.2],
-      [2.0,  0.6,  0.4],
-      [1.0,  0.0,  0.5],
-      [0.0,  0.4,  0.3],
-      [-0.8, 0.2, -0.2],
-      [-1.6, -0.6, -0.3],
-      [-2.4, -1.2, 0.0]
-    ],
-    crossWidths: [0.25, 0.55, 0.75, 0.85, 0.70, 0.45, 0.20],
-    bRatios: [0.45, 0.50, 0.55, 0.60, 0.55, 0.50, 0.45],
-    baseSpeed: 0.5
-  };
-
-  function catmullRom(p0, p1, p2, p3, t) {
-    var t2 = t * t, t3 = t2 * t;
-    return [
-      0.5 * ((2 * p1[0]) + (-p0[0] + p2[0]) * t + (2 * p0[0] - 5 * p1[0] + 4 * p2[0] - p3[0]) * t2 + (-p0[0] + 3 * p1[0] - 3 * p2[0] + p3[0]) * t3),
-      0.5 * ((2 * p1[1]) + (-p0[1] + p2[1]) * t + (2 * p0[1] - 5 * p1[1] + 4 * p2[1] - p3[1]) * t2 + (-p0[1] + 3 * p1[1] - 3 * p2[1] + p3[1]) * t3),
-      0.5 * ((2 * p1[2]) + (-p0[2] + p2[2]) * t + (2 * p0[2] - 5 * p1[2] + 4 * p2[2] - p3[2]) * t2 + (-p0[2] + 3 * p1[2] - 3 * p2[2] + p3[2]) * t3)
-    ];
-  }
-
-  function pointOnCurve(t) {
-    var pts = ENERGY_BODY.controlPoints;
-    var n = pts.length;
-    if (n === 0) return [0, 0, 0];
-    if (n === 1) return pts[0].slice();
-    var seg = t * (n - 1);
-    var i = Math.min(Math.floor(seg), n - 2);
-    var u = seg - i;
-    var p0 = pts[Math.max(0, i - 1)];
-    var p1 = pts[i];
-    var p2 = pts[i + 1];
-    var p3 = pts[Math.min(n - 1, i + 2)];
-    return catmullRom(p0, p1, p2, p3, u);
-  }
-
-  function pickEnergyBodyColor(light) {
-    var r = Math.random();
-    if (light > 0.55) {
-      return Math.random() < 0.7 ? COLOR_GREEN : COLOR_PALE_GREEN;
-    }
-    if (r < 0.45) return COLOR_NAVY;
-    if (r < 0.85) return COLOR_GREEN;
-    return COLOR_PALE_GREEN;
-  }
-
-  // Macro-mass definition for the energy body.  4 large directional masses
-  // along the curve.  Weights sum to 1 and the mixture produces a continuous
-  // field with coherent peaks and calm negative space between them.
-  var MACRO_MASSES = [
-    { center: 0.18, width: 0.12, weight: 0.22, flowSpeed: 0.45, flowPhase: 0.0, flowWavelength: 8.0, color: COLOR_NAVY, colorBias: 0.2 },
-    { center: 0.43, width: 0.15, weight: 0.28, flowSpeed: 0.55, flowPhase: 1.6, flowWavelength: 9.0, color: COLOR_GREEN, colorBias: 0.4 },
-    { center: 0.68, width: 0.15, weight: 0.28, flowSpeed: 0.50, flowPhase: 3.2, flowWavelength: 9.0, color: COLOR_PALE_GREEN, colorBias: 0.5 },
-    { center: 0.88, width: 0.12, weight: 0.22, flowSpeed: 0.40, flowPhase: 4.8, flowWavelength: 8.0, color: COLOR_GREEN, colorBias: 0.3 }
-  ];
-
-  function generateEnergyBodyParticles(count) {
-    var particles = [];
-    var cp = ENERGY_BODY.controlPoints;
-    var n = cp.length;
-    var crossWidths = ENERGY_BODY.crossWidths;
-    var bRatios = ENERGY_BODY.bRatios;
-    var baseSpeed = ENERGY_BODY.baseSpeed;
-
-    for (var i = 0; i < count; i++) {
-      // Pick a macro mass and sample t from its distribution.
-      var r = Math.random();
-      var cumulative = 0;
-      var macro = MACRO_MASSES[0];
-      for (var m = 0; m < MACRO_MASSES.length; m++) {
-        cumulative += MACRO_MASSES[m].weight;
-        if (r < cumulative) { macro = MACRO_MASSES[m]; break; }
-      }
-      var t = macro.center + gaussian() * macro.width * 0.6;
-      t = Math.max(0.001, Math.min(0.999, t));
-
-      // Determine active macro mass and local coordinate within it.
-      var macroIdx = 0;
-      var macroInfluence = 0;
-      for (var m = 0; m < MACRO_MASSES.length; m++) {
-        var mm = MACRO_MASSES[m];
-        var d = (t - mm.center) / mm.width;
-        var infl = mm.weight * Math.exp(-d * d);
-        if (infl > macroInfluence) { macroInfluence = infl; macroIdx = m; }
-      }
-      var activeMacro = MACRO_MASSES[macroIdx];
-      var localT = (t - activeMacro.center) / activeMacro.width;
-
-      var seg = t * (n - 1);
-      var segIdx = Math.min(Math.floor(seg), n - 2);
-      var segT = seg - segIdx;
-      var st = segT * segT * (3 - 2 * segT);
-
-      var cw0 = crossWidths[segIdx];
-      var cw1 = crossWidths[segIdx + 1];
-      var crossW = cw0 + (cw1 - cw0) * st;
-
-      var br0 = bRatios[segIdx];
-      var br1 = bRatios[segIdx + 1];
-      var bRatio = br0 + (br1 - br0) * st;
-
-      // Compression / relaxation: modulate cross-section along the curve.
-      var localW = crossW * (1.0 + Math.sin(t * 9.0) * 0.15);
-      var localB = crossW * bRatio * (1.0 + Math.cos(t * 7.0) * 0.12);
-
-      var base = pointOnCurve(t);
-      var t1 = pointOnCurve(Math.min(1, t + 0.002));
-      var t0 = pointOnCurve(Math.max(0, t - 0.002));
-      var tangent = [t1[0] - t0[0], t1[1] - t0[1], t1[2] - t0[2]];
-      var tanLen = Math.sqrt(tangent[0] * tangent[0] + tangent[1] * tangent[1] + tangent[2] * tangent[2]);
-      if (tanLen < 1e-8) tanLen = 1;
-      tangent[0] /= tanLen; tangent[1] /= tanLen; tangent[2] /= tanLen;
-
-      var up = [0, 0, 1];
-      var dp = tangent[0] * up[0] + tangent[1] * up[1] + tangent[2] * up[2];
-      if (Math.abs(dp) > 0.95) up = [0, 1, 0];
-      var normal = [
-        up[1] * tangent[2] - up[2] * tangent[1],
-        up[2] * tangent[0] - up[0] * tangent[2],
-        up[0] * tangent[1] - up[1] * tangent[0]
-      ];
-      var nlen = Math.sqrt(normal[0] * normal[0] + normal[1] * normal[1] + normal[2] * normal[2]);
-      if (nlen < 1e-8) nlen = 1;
-      normal[0] /= nlen; normal[1] /= nlen; normal[2] /= nlen;
-      var binormal = [
-        tangent[1] * normal[2] - tangent[2] * normal[1],
-        tangent[2] * normal[0] - tangent[0] * normal[2],
-        tangent[0] * normal[1] - tangent[1] * normal[0]
-      ];
-
-      // Gaussian cross-section with organic jitter
-      var u = gaussian() * 0.5;
-      var v = gaussian() * 0.5;
-      var jitter = (Math.random() - 0.5) * 0.06;
-      var x = base[0] + normal[0] * u * localW + binormal[0] * v * localB + normal[0] * jitter;
-      var y = base[1] + normal[1] * u * localW + binormal[1] * v * localB + normal[1] * jitter;
-      var z = base[2] + normal[2] * u * localW + binormal[2] * v * localB + normal[2] * jitter;
-
-      var light = lightFieldAt(x, y, z);
-      var color = pickEnergyBodyColor(light);
-      // Blend macro color bias into the base color for coherent macro identity.
-      var bias = activeMacro.colorBias;
-      color = [
-        color[0] * (1 - bias) + activeMacro.color[0] * bias,
-        color[1] * (1 - bias) + activeMacro.color[1] * bias,
-        color[2] * (1 - bias) + activeMacro.color[2] * bias
-      ];
-
-      var size = 0.5 + light * 0.8 + Math.abs(u) * 0.3;
-      // Meso flow: coherent internal wave inside the active macro mass.
-      var speed = baseSpeed + activeMacro.flowSpeed * (1.0 - Math.min(1, Math.abs(localT)));
-      var phase = activeMacro.flowPhase + localT * activeMacro.flowWavelength + (Math.random() - 0.5) * 0.3;
-      var materialId = light > 0.65 ? MAT.ENERGY_ACCENT : MAT.ENERGY_STREAM;
-
-      particles.push({
-        x: x, y: y, z: z,
-        color: color,
-        size: size,
-        light: light,
-        phase: phase,
-        speed: speed,
-        materialId: materialId
-      });
-    }
-
-    return particles;
-  }
-
-  function createEnergyBody(count, opacity) {
-    var particles = generateEnergyBodyParticles(count);
-    var n = particles.length;
-    var pos = new Float32Array(n * 3);
-    var col = new Float32Array(n * 3);
-    var sz = new Float32Array(n);
-    var br = new Float32Array(n);
-    var ph = new Float32Array(n);
-    var sp = new Float32Array(n);
-    var mi = new Float32Array(n);
-
-    for (var i = 0; i < n; i++) {
-      var p = particles[i];
-      pos[i * 3] = p.x; pos[i * 3 + 1] = p.y; pos[i * 3 + 2] = p.z;
-      col[i * 3] = p.color[0]; col[i * 3 + 1] = p.color[1]; col[i * 3 + 2] = p.color[2];
-      sz[i] = p.size;
-      br[i] = p.light;
-      ph[i] = p.phase;
-      sp[i] = p.speed;
-      mi[i] = p.materialId;
-    }
-
-    var geo = new THREE.BufferGeometry();
-    geo.setAttribute("position", new THREE.BufferAttribute(pos, 3));
-    geo.setAttribute("aColorMix", new THREE.BufferAttribute(col, 3));
-    geo.setAttribute("aSize", new THREE.BufferAttribute(sz, 1));
-    geo.setAttribute("aBrightness", new THREE.BufferAttribute(br, 1));
-    geo.setAttribute("aPhase", new THREE.BufferAttribute(ph, 1));
-    geo.setAttribute("aSpeed", new THREE.BufferAttribute(sp, 1));
-    geo.setAttribute("aMaterialId", new THREE.BufferAttribute(mi, 1));
-
-    var mat = new THREE.ShaderMaterial({
-      uniforms: {
-        uTime: uTime,
-        uPointScale: uScaleGlobal,
-        uReduceMotion: uReduceMotion,
-        uEntrance: uEntranceProgress,
-        uScrollProgress: uScrollProgress,
-        uOpacity: { value: opacity },
-        uLightDebug: uLightDebug, uMaterialDebug: uMaterialDebug,
-        uEmissionDebug: uEmissionDebug
-      },
-      vertexShader: energyBodyVertexShader,
-      fragmentShader: dustFragmentShader,
-      transparent: true, depthWrite: false, depthTest: true,
-      blending: THREE.NormalBlending
-    });
-
-    var pts = new THREE.Points(geo, mat);
-    pts.frustumCulled = false;
-    pts.renderOrder = 0;
-    scene.add(pts);
-    fieldObjects.push(pts);
-    materialOpacityRefs.push({ uniform: mat.uniforms.uOpacity, base: opacity, isDust: false });
   }
 
   // ─── Optical Pipeline: HDR + Selective Bloom ──────────────
@@ -1520,7 +1972,8 @@ var SHAPE_C = {
     renderer.setClearColor(0xf0f4f3, 1);
 
     createCubeSystem(cubeCounts);
-    createEnergyBody(fieldCounts.primary, 0.82);
+    createFieldSystem(FIELD_PRIMARY, fieldCounts.primary, true, 0.0);
+    createFieldSystem(FIELD_SECONDARY, fieldCounts.secondary, false, 1.8);
     createDustSystem(fieldCounts.dust, 0.18);
 
     resize();
